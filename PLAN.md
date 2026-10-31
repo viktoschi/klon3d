@@ -164,7 +164,7 @@ every torso height. Also, the bust lies at 120 cm, not at
 | **Subdivision** | subdivide both seam partners equally by **length fraction** as in CLO (§4 of the specification), point nodes of both sides merged up to 2 mm; result: point pairs per sub-seam; `klon3d netz` | **done** (finding 33) |
 | Seams | support springs between the partners, 6 mm overlap seam in the middle | flush seam with bending across the seam **done** (finding 34); the overlap seam comes with the glue zones |
 | Reduction | scale rest lengths: torso 5.5%, sleeves 1–2%, cuff 5% | **done** (finding 34): rest length × (1 − r), mass of the cut piece × (1 − r)²; if the reduction is already in the pattern (Bluse3), r = 0 |
-| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO's *Gluing* (Glue Fill by outline, Glue Brush painted freely) | open |
+| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO's *Gluing* (Glue Fill by outline, Glue Brush painted freely) | **done** as a bond that holds the offset vector (`klebung.rs`, task #11): no sliding, load carried across, `klebt <Teil>` in the placement file; **not** the bending of the bonded plate, and not against the body ("Tack on Avatar") |
 
 **Acceptance criterion:** all seam pairs of equal length, deviation ≤ 0.08 cm —
 the criterion from `pruef_bluse3.py`. **Passed** (finding 32,
@@ -254,15 +254,24 @@ confirmed**. They are among the first things to calibrate.
 **Acceptance criterion:** standing, the simulation shows the five known faults
 of test blouse v26 (see below).
 
-**Gluing (the user's request, 2026-10-19):** latex is glued, not
-sewn. klon3d should be able to do this itself, not via a detour through CLO. The
-laminate fabrics in `assets/stoffe` so far treat a glued laminate as
-a single fabric (bending ∝ t³, `MATERIAL.md`). With glue zones this becomes
-testable in klon3d itself: two glued layers of `Latex_0.4mm_Radical_Rubber` against
-one layer of `Latex_Laminat_2x0.4mm_abgeleitet` and against two loose layers —
-same shape, compared as in stage 5. Expected: glued ≈ laminate fabric,
-loose clearly softer (bending ×2 instead of ×8). Model for the user interface:
-CLO help "New in…" (Glue Fill, Glue Brush).
+**Gluing (the user's request, 2026-10-19):** latex is glued, not sewn. klon3d
+should be able to do this itself, not via a detour through CLO. **Done** (task
+#11) as glue zones: a bonded point holds its **offset vector** to a triangle of
+the layer below (CLO's tack spring, finding 59), one spring per point, stiffness
+from the upper fabric's in-plane value. The placement file carries it as
+`klebt <Teil>`, and `klon3d anziehen` reports coupled points, the largest rest
+gap and the points without a counterpart.
+
+What that does and does not give: two bonded layers no longer slide, and a
+displacement of one layer carries the other along (test `klebung`). The
+**bending** of the bonded plate is not reproduced, and the comparison planned
+here therefore does not separate the cases: on a 200 × 40 mm strip held at both
+ends, two loose layers, two bonded layers and one 0.8 mm laminate sag within
+0.2 % of each other (9.254 / 9.254 / 9.235 mm), because the sag is carried by
+membrane tension and `2 × 348 N/m` in parallel equals the laminate's `696 N/m`.
+Reproducing the laminate's plate stiffness (19,858 against 2 × 2,482) needs a
+bending term over the bonded pair, not more glue springs. Model for the user
+interface: CLO help "New in…" (Glue Fill, Glue Brush).
 
 ## Stage 5 — Inspection output
 

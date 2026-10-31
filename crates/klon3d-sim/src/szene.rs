@@ -146,6 +146,10 @@ pub struct Szene {
     /// m), zeilenweise, für die Dehnung.
     pub ruhe_inv: Vec<[f64; 4]>,
     pub teile: Vec<Teilinfo>,
+    /// Glue zones: bonded areas that behave like one plate of the total
+    /// thickness ([`crate::klebung`]). Empty by default, so a scene without
+    /// zones computes exactly as before.
+    pub klebungen: Vec<crate::klebung::Zone>,
     /// Genähte Randkanten ohne Biege-Constraint (Teile gespiegelt).
     pub naht_biegung_ohne: usize,
     pub koerper: Vec<Koerper>,
@@ -332,6 +336,7 @@ impl Szene {
             dreiecke,
             ruhe_inv,
             teile,
+            klebungen: Vec::new(),
             naht_biegung_ohne,
             koerper,
             param,

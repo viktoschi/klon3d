@@ -7,6 +7,8 @@
 //! * [`faerbung`] — Constraints in Farben ohne gemeinsame Punkte;
 //! * [`cpu`] — XPBD auf der CPU, `f64`, kleine Unterschritte (Prüfweg);
 //! * [`implizit`] — Rückwärts-Euler mit CG wie CLO (Befund 35, Grundlage);
+//! * [`klebung`] — Klebezonen: zwei verbundene Lagen haften aneinander
+//!   (Versatz gehalten, weiche Tack-Feder, Befund 59);
 //! * [`koerper`] — Kollisionskörper: Zylinder und Körpernetz;
 //! * [`netzkoerper`] — das Körpernetz: vorzeichenbehafteter Abstand über
 //!   Pseudonormalen, Suche im Gitter;
@@ -27,6 +29,7 @@ pub mod ausgabe;
 pub mod cpu;
 pub mod faerbung;
 pub mod implizit;
+pub mod klebung;
 pub mod koerper;
 pub mod material;
 pub mod messung;

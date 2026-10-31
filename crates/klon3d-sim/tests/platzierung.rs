@@ -106,6 +106,51 @@ fn anziehen_netz(name: &str, netz: &Musternetz, liste: &Lageliste, k: &Koerperne
     e
 }
 
+/// Glue zones from the placement file: `klebt <Teil>` on a piece that lies on
+/// an already placed one produces one zone whose bonds cover the overlap, and
+/// the stiffness comes from the fabric (in-plane, not the plate value).
+#[test]
+#[cfg_attr(debug_assertions, ignore = "nur mit --release")]
+fn klebezone_aus_der_lage() {
+    let Some((_k, h)) = band::pruefkoerper() else { return };
+    let (netz, mut liste) = bluse();
+    let angabe = liste
+        .angaben
+        .iter_mut()
+        .find(|a| a.teil == "Untercup Links")
+        .expect("Untercup Links in der Lage");
+    angabe.klebt_auf = Some("Oberteil vorn Links".into());
+    let p = platziere(&netz, &liste, &h).unwrap();
+    let vg = Teilvorgabe { material: RADICAL_RUBBER_04, reduktion: 0.0 };
+    let s = Szene::aus_netz(&p.netz, &|_| vg, &|ti, q| p.lage(ti, q), vec![], Simparameter::default());
+    let zonen = p.klebungen(&s);
+    assert_eq!(zonen.len(), 1, "eine Klebezone je `klebt`");
+    let (zone, ohne) = &zonen[0];
+    // Der Untercup ragt ueber das Oberteil hinaus - ein offener Kleberand ist
+    // bei einem echten Schnitt normal. Was gelten muss: die Bilanz stimmt,
+    // jeder Punkt des oberen Teils ist entweder gebunden oder gezaehlt.
+    let oben = p
+        .netz
+        .teile
+        .iter()
+        .position(|t| t.teil == "Untercup Links" || t.teil.rsplit(" - ").next() == Some("Untercup Links"))
+        .expect("Untercup Links platziert");
+    let punkte_oben = s.teile[oben].punkte.len();
+    println!("Klebung: {} gebunden, {ohne} offen, {punkte_oben} Punkte oben", zone.len());
+    assert_eq!(zone.len() + ohne, punkte_oben, "Bilanz der Punkte");
+    assert!(zone.len() > punkte_oben / 2, "zu wenige Bindungen: {} von {punkte_oben}", zone.len());
+    assert!(*ohne > 0, "der offene Rand des Untercups muss gemeldet werden");
+    // Der Ruheversatz ist gehalten: frisch gebaut ist der Restabstand null.
+    assert!(zone.groesster_abstand(&s.x) < 1e-9);
+    // Steifigkeit aus dem Stoff: n Bindungen à dehnung_n_m.
+    let erwartet = RADICAL_RUBBER_04.dehnung_n_m * zone.len() as f64;
+    assert!((zone.steifigkeit - erwartet).abs() / erwartet < 1e-9, "{} gegen {erwartet}", zone.steifigkeit);
+    // Ein unbekanntes Ziel ist ein Fehler und kein stilles Nichtkleben.
+    let mut falsch = liste.clone();
+    falsch.angaben.iter_mut().find(|a| a.teil == "Untercup Links").unwrap().klebt_auf = Some("gibt es nicht".into());
+    assert!(platziere(&netz, &falsch, &h).is_err());
+}
+
 /// Die Lage vor dem Nähen: 16 genähte Teile platziert, die 12 aufgeklebten
 /// weggelassen, alle 24 Nähte da; kein Punkt tiefer als 5 mm in der Haut
 /// (der Kollider findet bis 10 mm). Nähte zwischen Teilen eines Blocks mit
@@ -123,6 +168,9 @@ fn bluse_platzieren() {
     assert!(p.naehte_weggelassen.is_empty());
     let vg = Teilvorgabe { material: RADICAL_RUBBER_04, reduktion: 0.0 };
     let s = Szene::aus_netz(&p.netz, &|_| vg, &|ti, q| p.lage(ti, q), vec![], Simparameter::default());
+    // Ohne `klebt` in der Lagedatei entsteht keine Klebezone - bestehende
+    // Muster rechnen unveraendert (Rueckwaertsvertraeglichkeit).
+    assert!(p.klebungen(&s).is_empty(), "Klebezone ohne `klebt` in der Lage");
     let tiefster = s.x.iter().map(|&q| k.naechster_alle(q).abstand).fold(f64::INFINITY, f64::min);
     assert!(tiefster > -5e-3, "Punkt {:.1} mm in der Haut", tiefster * 1e3);
     for (kennung, d) in messung::nahtabstaende(&s, &p.netz) {
