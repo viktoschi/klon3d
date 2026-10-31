@@ -1,12 +1,19 @@
-//! Der Eingang von `klon3d.exe`: Körper aus der `.smis`, Kette oder Fallback.
+//! The entry point of `klon3d.exe`: body from `.smis`, chain or fallback.
 //!
-//! Netz und Daten: CLOs Resizing-Ordner (`CLO_FEMALE` setzt einen anderen).
-//! Fehlt er, werden die Tests übersprungen.
+//! Mesh and data: CLO's resizing folder (`CLO_FEMALE` selects another one; the
+//! default is 2026.1). Without it the tests are skipped.
+//!
+//! Three paths are checked: the 2026.1 chain (default folder), the 5.2 chain
+//! (only when the 5.2 folder exists – backup) and the old `anpassen` path from a
+//! folder holding only the 5.2 `Advanced` files.
 
 use std::path::PathBuf;
 
 use klon3d_koerper::kette::KOERPER;
 use klon3d_koerper::koerper::{aus_smis, ordner, Weg};
+
+/// CLO's 5.2 folder of the default installation.
+const ORDNER_52: &str = r"C:\Program Files\CLO Standalone\Preset\Avatar\Resizing\Female";
 
 fn daten() -> Option<(PathBuf, klon3d_pattern::Smis)> {
     let o = ordner();
@@ -40,17 +47,41 @@ fn kette_formt_den_koerper() {
     let k = aus_smis(&o, &|n| smis.wert(n)).expect("Körper");
     assert_eq!(k.weg, Weg::Kette, "{:?}", k.meldungen);
     pruefe_netz(&k);
-    let m = k.kette.as_ref().expect("Ergebnis der Kette").werte();
+    let e = k.kette.as_ref().expect("Werte der Kette");
     for (j, name) in [(2, "bust_circ"), (6, "waist_circ"), (8, "hip_circ")] {
-        assert!((m[j] - smis.wert(name).unwrap()).abs() < 1.0, "{name}: {}", m[j]);
+        assert!(
+            (e.werte[j] - smis.wert(name).unwrap()).abs() < 1.0,
+            "{name}: {}",
+            e.werte[j]
+        );
     }
 }
 
-/// Nur die Dateien des alten Wegs: die Kette ist nicht ladbar, `anpassen`
-/// formt.
+/// No 2026.1 data, but 5.2 data: the 5.2 chain shapes (backup).
+#[test]
+fn sicherung_52_formt_den_koerper() {
+    let Some((_, smis)) = daten() else { return };
+    let alt = PathBuf::from(ORDNER_52);
+    if !alt.join("ConvertingMat_DETAIL_Human_Bust_TotalHeight.bd").is_file() {
+        eprintln!("übersprungen: 5.2-Daten fehlen in {}", alt.display());
+        return;
+    }
+    let k = aus_smis(&alt, &|n| smis.wert(n)).expect("Körper");
+    assert_eq!(k.weg, Weg::Kette52, "{:?}", k.meldungen);
+    assert!(
+        k.meldungen[0].starts_with("2026.1 nicht ladbar"),
+        "{:?}",
+        k.meldungen
+    );
+    pruefe_netz(&k);
+    assert!(k.kette.is_some());
+}
+
+/// Only the files of the old path: neither chain is loadable, `anpassen` shapes.
 #[test]
 fn fallback_ohne_kettendaten() {
-    let Some((o, smis)) = daten() else { return };
+    let Some((_, smis)) = daten() else { return };
+    let alt52 = PathBuf::from(ORDNER_52);
     let alt = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("koerper_nur_alt");
     std::fs::create_dir_all(&alt).expect("Ordner");
     for f in [
@@ -58,11 +89,15 @@ fn fallback_ohne_kettendaten() {
         "ConvertingMat_DETAIL_Advanced_TotalHeight.bd",
         "_DetailFeature_Advanced_Bust_TotalHeight.txt",
     ] {
-        std::fs::copy(o.join(f), alt.join(f)).expect(f);
+        std::fs::copy(alt52.join(f), alt.join(f)).expect(f);
     }
     let k = aus_smis(&alt, &|n| smis.wert(n)).expect("Körper");
     assert_eq!(k.weg, Weg::Anpassen);
-    assert!(k.meldungen[0].starts_with("Formungskette nicht ladbar"));
+    assert!(
+        k.meldungen[0].starts_with("2026.1 nicht ladbar"),
+        "{:?}",
+        k.meldungen
+    );
     assert!(k.kette.is_none());
     pruefe_netz(&k);
 }

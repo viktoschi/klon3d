@@ -134,18 +134,19 @@ fn bluse_platzieren() {
     }
 }
 
-/// Anziehen am Körper ([`anziehen`], Befunde 96, 98) mit den Vorgaben:
-/// Nähte schließen sich mit 0,1 m/s über 200 Bilder, gehalten (ohne
-/// Schwerkraft), Nahtfeder 2.000 N/m, dabei Körperpunkt gegen Stoffdreieck,
-/// bis 600 CG-Iterationen; dann mit voller Schwerkraft einschwingen, bis
-/// kein Teil mehr sinkt, und 10 s Haltephase (Befund 102). Kommt zur Ruhe
-/// (unter 0,015 m/s: mit genau gelösten Schritten fehlt die Dämpfung des
-/// abgebrochenen CG, Säume bewegen sich noch um 1 cm/s, ohne zu sinken),
-/// kein Punkt in der Haut, jede Naht mit Median unter 3 mm, mindestens 98 %
-/// aller Nahtpaare bis 10 mm (gemessen 98,9 %; Befund 98 mit 50
-/// Iterationen 99,4 %, Befund 96 mit 500 N/m: 98,6 %), kein Teil
-/// sinkt in der Haltephase mehr als 5 mm (ADR-023); ohne Körperpunkt gegen
-/// Stoffdreieck weniger Nahtpaare.
+/// Dressing on the body ([`anziehen`], findings 96, 98) with these settings:
+/// seams close at 0.1 m/s over 200 frames, held (without gravity), seam spring
+/// 2 000 N/m, with body point against cloth triangle, up to 600 CG iterations;
+/// then settle in with full gravity until no piece sinks any more, and a 10 s
+/// hold phase (findings 102). It comes to rest (below 0.015 m/s: with exactly
+/// solved steps the damping of the truncated CG is missing, hems still move by
+/// 1 cm/s without sinking), no point inside the skin, every seam with a median
+/// below 3 mm, at least 98 % of all seam pairs within 10 mm (measured 99.7 %;
+/// findings 98 with 50 iterations 99.4 %, findings 96 with 500 N/m: 98.6 %), no
+/// piece sinks more than 5 mm in the hold phase (ADR-023). The
+/// body-point-against-cloth-triangle check is no longer measurable on the seam
+/// pairs at five substeps (both runs 99.7 %); that it does take effect is shown
+/// by `tuch_ueber_spitze` (tip 0.0 against 7.5 mm through the cloth).
 #[test]
 #[cfg_attr(debug_assertions, ignore = "nur mit --release")]
 fn bluse_anziehen_am_koerper() {
@@ -159,7 +160,14 @@ fn bluse_anziehen_am_koerper() {
     assert!(mit.tiefster > -0.1e-3, "Punkt {:.2} mm in der Haut", mit.tiefster * 1e3);
     assert!(mit.anteil >= 0.98, "nur {:.1} % der Nahtpaare zu", mit.anteil * 100.0);
     assert!(mit.sinken.1 < 5e-3, "{} sinkt {:.1} mm", mit.sinken.0, mit.sinken.1 * 1e3);
-    assert!(mit.anteil > ohne.anteil, "Körperpunkt gegen Stoffdreieck hilft nicht: {:.3} gegen {:.3}", mit.anteil, ohne.anteil);
+    // At five substeps both runs are equally good (99.7 %); the check must not
+    // make the result worse.
+    assert!(
+        mit.anteil >= ohne.anteil - 1e-9,
+        "Körperpunkt gegen Stoffdreieck verschlechtert: {:.3} gegen {:.3}",
+        mit.anteil,
+        ohne.anteil
+    );
 }
 
 /// Allgemeinheit (Befund 100): der Bolero v37 aus dem Hexenensemble vom

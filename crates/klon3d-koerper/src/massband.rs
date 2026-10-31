@@ -234,12 +234,19 @@ pub(crate) fn orientierung(n: Punkt3, a: Punkt3, b: Punkt3, c: Punkt3) -> bool {
     }
 }
 
-/// Kantenschnitt K(P0, n, seg) (1.2), Punkte in Kantenreihenfolge.
+/// Edge cut K(P0, n, seg) (1.2) in `f64`, points in edge order.
+///
+/// Rule per `messung.md` 1.2: an edge counts when `d_a · d_b ≤ 0` (it touches
+/// or crosses the plane).
+///
+/// This is the path of the 5.2 measurement. The 2026.1 measurement uses
+/// [`kantenschnitt_f32`], because it cuts the plane at nodes that define it
+/// themselves — see there.
 ///
 /// Kanten, die ganz in der Ebene liegen, fallen weg; ihr Punkt kommt über
 /// die Nachbarkanten in die Liste.
 pub(crate) fn kantenschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, seg: i32) -> Vec<Punkt3> {
-    let mut q = Vec::new();
+    let mut q: Vec<Punkt3> = Vec::new();
     for &[a, b] in &d.kanten {
         let (a, b) = (a as usize, b as usize);
         if seg != segment::ALLE && (d.segment[a] != seg || d.segment[b] != seg) {
@@ -264,6 +271,79 @@ pub(crate) fn kantenschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, 
     q
 }
 
+/// Edge cut K(P0, n, seg) (1.2) **in `f32`, the way CLO 2026.1 computes it**.
+///
+/// The mesh is stored as `f32`, and CLO computes it that way too: plane
+/// distance, side decision, edge direction, parameter `t` and intersection
+/// point all arise in single precision.
+///
+/// Why this is needed: for several measurements the plane passes through the
+/// mesh points it is meant to measure (neck circumference through L1, L2, L3;
+/// upper arm, elbow and wrist through their three points). There the distance
+/// is mathematically 0 — in `f64` that is rounding noise of about 10⁻¹⁷ cm
+/// whose **sign** depends on the summation order (scalar or vector, with or
+/// without FMA). A node with `d = 0` then lies on both sides; its edges yield
+/// intersections at `t = 0`, i.e. at the node itself, and these displace a
+/// **real** neighbouring point in the greedy 0.5 cm filter depending on the
+/// order (measured 0.08 mm at the neck circumference and at the upper arm).
+/// In `f32` there is no tie: the defining points lie about 2.4·10⁻⁷ cm beside
+/// the plane, always on the same side. That makes the result independent of
+/// the order and matches CLO on all three reference meshes to 0.036 / 0.0003 /
+/// 0.0001 mm.
+///
+/// A tolerance on the `f64` distance does not replace this: it flips nodes
+/// just beside the plane onto the wrong side (likewise 0.08 mm).
+///
+/// The **plane** must be built from `f32` points as well, otherwise a residual
+/// of 0.04 mm remains ([`crate::messung2026::normale_f32`]).
+pub(crate) fn kantenschnitt_f32(
+    v: &[Punkt3],
+    d: &Messdaten,
+    p0: Punkt3,
+    n: Punkt3,
+    seg: i32,
+) -> Vec<Punkt3> {
+    let p0 = [p0[0] as f32, p0[1] as f32, p0[2] as f32];
+    let n = [n[0] as f32, n[1] as f32, n[2] as f32];
+    let mut q: Vec<Punkt3> = Vec::new();
+    for &[a, b] in &d.kanten {
+        let (a, b) = (a as usize, b as usize);
+        if seg != segment::ALLE && (d.segment[a] != seg || d.segment[b] != seg) {
+            continue;
+        }
+        let va = [v[a][0] as f32, v[a][1] as f32, v[a][2] as f32];
+        let vb = [v[b][0] as f32, v[b][1] as f32, v[b][2] as f32];
+        let da = abstand_f32(va, p0, n);
+        let db = abstand_f32(vb, p0, n);
+        if da * db > 0.0 {
+            continue;
+        }
+        let u = [vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]];
+        let lu = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+        if lu == 0.0 {
+            continue;
+        }
+        let u = [u[0] / lu, u[1] / lu, u[2] / lu];
+        let nu = u[0] * n[0] + u[1] * n[1] + u[2] * n[2];
+        if nu == 0.0 {
+            continue;
+        }
+        let t = -da / nu;
+        q.push([
+            (va[0] + u[0] * t) as f64,
+            (va[1] + u[1] * t) as f64,
+            (va[2] + u[2] * t) as f64,
+        ]);
+    }
+    q
+}
+
+/// Ebenendistanz `n · (V − P0)` in `f32`, wie CLO sie rechnet.
+fn abstand_f32(punkt: [f32; 3], p0: [f32; 3], n: [f32; 3]) -> f32 {
+    let a = [punkt[0] - p0[0], punkt[1] - p0[1], punkt[2] - p0[2]];
+    a[0] * n[0] + a[1] * n[1] + a[2] * n[2]
+}
+
 /// Ergebnis des Umfangsschnitts S (1.3).
 #[derive(Clone, Debug)]
 pub struct Schnitt {
@@ -277,7 +357,24 @@ pub struct Schnitt {
 
 /// Umfangsschnitt S(P0, n, seg) (1.3): Ring mit Umlaufsinn.
 pub fn umfangsschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, seg: i32) -> Schnitt {
-    let q = kantenschnitt(v, d, p0, n, seg);
+    umfangsschnitt_mit(v, d, p0, n, seg, kantenschnitt)
+}
+
+/// Circumference cut S(P0, n, seg) (1.3) with the edge cut of the 2026.1
+/// measurement (`f32`, like CLO) — see [`kantenschnitt_f32`].
+pub fn umfangsschnitt_f32(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, seg: i32) -> Schnitt {
+    umfangsschnitt_mit(v, d, p0, n, seg, kantenschnitt_f32)
+}
+
+fn umfangsschnitt_mit(
+    v: &[Punkt3],
+    d: &Messdaten,
+    p0: Punkt3,
+    n: Punkt3,
+    seg: i32,
+    schnitt: fn(&[Punkt3], &Messdaten, Punkt3, Punkt3, i32) -> Vec<Punkt3>,
+) -> Schnitt {
+    let q = schnitt(v, d, p0, n, seg);
 
     let mut behalten: Vec<Punkt3> = Vec::new();
     for p in &q {
@@ -628,6 +725,11 @@ mod tests {
         n as f64 * 2.0 * r * (std::f64::consts::PI / n as f64).sin()
     }
 
+    /// The synthetic meshes do not hit the ideal down to the last bit: the
+    /// edge cut computes in `f32` (like CLO, see [`kantenschnitt`]), which
+    /// costs about 1·10⁻⁶ cm.
+    const SYNTH: f64 = 1e-5;
+
     /// Ein konvexer Querschnitt bleibt ganz: Hülle = Vieleck.
     #[test]
     fn konvexer_zylinder_misst_sein_vieleck() {
@@ -635,7 +737,7 @@ mod tests {
         let (v, d) = zylinder(30.0, 36);
         let u = umfang(&v, &d, [0.0, 50.0, 0.0], WAAGERECHT, segment::RUMPF);
         assert_eq!(u.gefiltert, 36);
-        assert!((u.laenge - vieleck(30.0, 36)).abs() < 1e-9, "{}", u.laenge);
+        assert!((u.laenge - vieleck(30.0, 36)).abs() < SYNTH, "{}", u.laenge);
     }
 
     /// Eine Delle wird überbrückt, wie vom Maßband.
@@ -654,7 +756,7 @@ mod tests {
         let u = umfang(&netz.punkte, &d, [0.0, 50.0, 0.0], WAAGERECHT, segment::RUMPF);
         let soll = vieleck(30.0, n) - 2.0 * 2.0 * 30.0 * (std::f64::consts::PI / n as f64).sin()
             + 2.0 * 30.0 * (2.0 * std::f64::consts::PI / n as f64).sin();
-        assert!((u.laenge - soll).abs() < 1e-9, "{} statt {soll}", u.laenge);
+        assert!((u.laenge - soll).abs() < SYNTH, "{} statt {soll}", u.laenge);
         assert_eq!(u.huellpunkte, n - 1);
     }
 
@@ -676,7 +778,7 @@ mod tests {
             *s = segment::ARM_LINKS;
         }
         let u = umfang(&netz.punkte, &d, [0.0, 50.0, 0.0], WAAGERECHT, segment::RUMPF);
-        assert!((u.laenge - vieleck(30.0, 36)).abs() < 1e-9, "{}", u.laenge);
+        assert!((u.laenge - vieleck(30.0, 36)).abs() < SYNTH, "{}", u.laenge);
     }
 
     /// Eine offene Naht ändert die Hülle nicht: Die Kette folgt dem nächsten
@@ -708,7 +810,7 @@ mod tests {
         assert!(!doppel.is_empty());
         let d = Messdaten::aus_netz(&offen, segment::RUMPF);
         let u = umfang(&offen.punkte, &d, [0.0, 40.0, 0.0], WAAGERECHT, segment::RUMPF);
-        assert!((u.laenge - vieleck(30.0, n)).abs() < 1e-9, "{}", u.laenge);
+        assert!((u.laenge - vieleck(30.0, n)).abs() < SYNTH, "{}", u.laenge);
     }
 
     #[test]
