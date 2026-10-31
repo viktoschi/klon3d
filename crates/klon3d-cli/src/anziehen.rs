@@ -356,6 +356,19 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     }
     let tiefster = |s: &Szene| s.x.iter().map(|&q| koerper.naechster_alle(q).abstand).fold(f64::INFINITY, f64::min);
     println!("  Anfang       {} Punkte, tiefster Punkt {:+.1} mm (Kollider findet bis {:.0} mm)", s.x.len(), tiefster(&s) * 1e3, SUCHTIEFE * 1e3);
+    // Klebezonen aus der Lagedatei (`klebt <Teil>`): Die Bindung entsteht dort,
+    // wo die Teile tatsächlich liegen; ohne `klebt` entsteht keine Feder und
+    // jedes bestehende Muster rechnet unverändert.
+    for (zone, ohne) in p.klebungen(&s) {
+        println!(
+            "  Klebung      {:<40} {} Punkte gebunden, größter Abstand {:.1} mm, ohne Gegenstück {}",
+            zone.name,
+            zone.len(),
+            zone.groesster_abstand(&s.x) * 1e3,
+            ohne
+        );
+        s.klebungen.push(zone);
+    }
     if let Some(o) = &obj {
         if let Err(e) = std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("anfang.obj"), ausgabe::obj(&s))) {
             return fehler(format!("{}: {e}", o.display()));

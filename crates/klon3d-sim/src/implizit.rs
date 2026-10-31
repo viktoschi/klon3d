@@ -138,6 +138,12 @@ pub struct ImplizitParameter {
     /// Durchdringungen auch zwischen Nahtpartnern suchen wie CLO (Vorgabe aus,
     /// [`selbstkollision::finde_schnitte`]).
     pub selbst_schnitte_an_naehten: bool,
+    /// Faktor auf die Steifigkeit jeder Klebezone (Vorgabe 1). Die Steifigkeit
+    /// selbst steht in der Zone und kommt aus der Biegesteifigkeit des
+    /// Laminats ([`crate::klebung::Stoffpaar`]); der Faktor ist zum Prüfen da.
+    /// CLO rechnet die Klebe als Feder mit Jacobian, nicht als feste Kopplung
+    /// (Befund 59).
+    pub klebe_faktor: f64,
 }
 
 impl Default for ImplizitParameter {
@@ -162,6 +168,8 @@ impl Default for ImplizitParameter {
             selbst_steifigkeit: 1e-3,
             selbst_stoss_iterationen: 1,
             selbst_schnitte_an_naehten: false,
+            // 1 = die Steifigkeit der Zone selbst (aus ihrem Stoffpaar).
+            klebe_faktor: 1.0,
         }
     }
 }
@@ -243,6 +251,14 @@ impl ImplizitCg {
         // Annäherung wirkt auf v vor allen anderen Kräften (wie bei CLO).
         let x_anfang = if self.param.selbstkollision { s.x.clone() } else { Vec::new() };
         self.federn.clear();
+        // Klebezonen stehen fest und wirken in jedem Schritt, unabhängig von
+        // der Selbstkollision: Eine Zone ist keine Nähe, sondern eine Bindung.
+        for z in &s.klebungen {
+            if z.is_empty() {
+                continue;
+            }
+            self.federn.extend(crate::klebung::federn(z, &s.x, self.param.klebe_faktor));
+        }
         if self.param.selbstkollision {
             if self.selbst.as_ref().is_none_or(|(netz, _)| netz.r_punkt.len() != n) {
                 self.selbst = Some(selbstkollision::aus_szene(s, self.param.selbst_zusatzdicke));
@@ -326,7 +342,6 @@ impl ImplizitCg {
                 f[i] = add(f[i], mul(fe.kraft, fe.gewichte[q]));
             }
         }
-
         // b = h·(f − h·H·v)
         let mut hv = vec![[0.0; 3]; n];
         self.mal_h(s, &kk, &biege, &s.v, &mut hv);
@@ -666,6 +681,7 @@ mod tests {
             ruhe_inv: Vec::new(),
             teile: Vec::new(),
             naht_biegung_ohne: 0,
+            klebungen: Vec::new(),
             koerper: Vec::new(),
             param: Simparameter { schwerkraft: [0.0; 3], daempfung: 5.0, ..Simparameter::default() },
             zeit: 0.0,

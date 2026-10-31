@@ -22,7 +22,8 @@
 //!   Teil gespiegelt oder gedreht wird. Der Bezugspunkt darf ein Punktknoten
 //!   eines anderen Teils sein: Teile aus demselben Konstruktionsblock mit
 //!   demselben Bezugspunkt liegen zueinander wie im Muster, gemeinsame
-//!   Nahtpunkte also schon aufeinander.
+//!   Nahtpunkte also schon aufeinander. `klebt <Teil>` bindet dieses Teil an
+//!   das genannte statt es zu nähen ([`crate::klebung`]).
 //! * **Abwicklung:** Jedes Teil wird längentreu auf seinen Hüllkörper gelegt —
 //!   Prisma und Zylinder sind abwickelbar. Musterrichtung y (nach unten) wird
 //!   die Höhe bzw. die Armachse, Musterrichtung x der Umfang.
@@ -444,6 +445,9 @@ pub struct Lageangabe {
     /// Dicke der Folie dieses Teils (m), Laminat als Gesamtdicke; ohne: die
     /// des Materials ([`crate::Material::mit_dicke`]).
     pub dicke: Option<f64>,
+    /// Auf dieses Teil kleben statt nähen ([`crate::klebung`]): der Name des
+    /// Teils darunter. `None` = nicht geklebt.
+    pub klebt_auf: Option<String>,
 }
 
 /// Die Lagedatei: Abstand der Hüllkörper und je Teil eine Angabe.
@@ -490,7 +494,8 @@ fn mit_zusatz<T: Copy>(s: &str, namen: &[(&str, T)], null: T) -> Result<(T, f64)
 /// oder `hals vorn`, `hals hinten`, `hals seitlich`, `schulter` ± cm; am Arm
 /// ab dem Schulterpunkt längs der Achse zur Hand. Optionen: `gespiegelt`,
 /// `drehung N` (Grad), `abstand N` (cm, nur für dieses Teil), `dicke N` (mm,
-/// Folie bzw. Laminat dieses Teils). Ein Zusatz mit `cm` (`vorn +19,3cm`) ist Bogenlänge
+/// Folie bzw. Laminat dieses Teils), `klebt <Teil>` (dieses Teil wird auf das
+/// genannte geklebt statt genäht, siehe [`crate::klebung`]). Ein Zusatz mit `cm` (`vorn +19,3cm`) ist Bogenlänge
 /// statt Grad.
 pub fn lies_lage(text: &str) -> Result<Lageliste, String> {
     let mut liste = Lageliste { abstand: ABSTAND, angaben: Vec::new() };
@@ -535,6 +540,7 @@ pub fn lies_lage(text: &str) -> Result<Lageliste, String> {
         ];
         let (bezug, cm) = mit_zusatz(f[4], &hoehe_namen, Hoehenbezug::Null).map_err(fehler)?;
         let (mut gespiegelt, mut drehung_grad, mut abstand, mut dicke) = (false, 0.0, None, None);
+        let mut klebt_auf = None;
         if let Some(opt) = f.get(5) {
             let w: Vec<&str> = opt.split_whitespace().collect();
             let mut i = 0;
@@ -553,6 +559,14 @@ pub fn lies_lage(text: &str) -> Result<Lageliste, String> {
                         dicke = Some(zahl(w.get(i + 1).copied().unwrap_or("")).map_err(fehler)? / 1000.0);
                         i += 1;
                     }
+                    "klebt" => {
+                        let name = w.get(i + 1).copied().unwrap_or("");
+                        if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+                            return Err(fehler("erwartet 'klebt <Teilname>'".into()));
+                        }
+                        klebt_auf = Some(name.to_string());
+                        i += 1;
+                    }
                     andere => return Err(fehler(format!("unbekannte Option {andere:?}"))),
                 }
                 i += 1;
@@ -569,6 +583,7 @@ pub fn lies_lage(text: &str) -> Result<Lageliste, String> {
             drehung_grad,
             abstand,
             dicke,
+            klebt_auf,
         });
     }
     Ok(liste)
@@ -601,6 +616,8 @@ struct Abwicklung {
     hals_naht: [(f64, f64, f64); 4],
     /// Arm: das Armprisma mit Abstand; `um` ist die Bogenlänge des Ankers.
     armumriss: Vec<[f64; 2]>,
+    /// Abstand dieses Teils zur Haut (m) - der Suchradius der Klebezone.
+    abstand: f64,
     dicke: Option<f64>,
 }
 
@@ -624,6 +641,9 @@ pub struct Platzierung {
     mitte: [f64; 2],
     /// Weite der Rumpfhülle je [`WEITE_DZ`] ab `rumpf_hoehen.0` (≥ 1).
     weite: Vec<f64>,
+    /// Glue requests from the placement file: (piece index in `netz`, index of
+    /// the piece below).
+    klebt: Vec<(usize, usize)>,
 }
 
 /// Höhenschritt der Weite (m).
@@ -659,6 +679,48 @@ impl Platzierung {
     /// Dicke aus der Lageangabe von Teil `ti` (m), falls angegeben.
     pub fn dicke(&self, ti: usize) -> Option<f64> {
         self.abwicklung[ti].dicke
+    }
+
+    /// Glue zones requested by the placement file (`klebt <Teil>`), built
+    /// against the placed scene.
+    ///
+    /// The pair goes into one zone per request: every point of the upper piece
+    /// is bonded to the point of the lower piece it was placed on. The
+    /// stiffness comes from the two materials ([`crate::klebung::Stoffpaar`]),
+    /// the rest offset from where the pieces actually lie.
+    ///
+    /// The number returned with each zone counts the points of the upper piece
+    /// that found **no** partner below - an open glued border, or a piece that
+    /// does not lie on the one it is bonded to. Both go to the report, so a zone
+    /// that silently bonds half its area cannot pass as complete.
+    pub fn klebungen(&self, s: &Szene) -> Vec<(crate::klebung::Zone, usize)> {
+        let mut aus = Vec::new();
+        for &(oben_ti, unten_ti) in &self.klebt {
+            let (o, u) = (&s.teile[oben_ti], &s.teile[unten_ti]);
+            let paar = crate::klebung::Stoffpaar {
+                dehnung_oben: o.vorgabe.material.dehnung_n_m,
+                dicke_oben: o.vorgabe.material.dicke_m,
+                dicke_unten: u.vorgabe.material.dicke_m,
+            };
+            // Suchradius: der Abstand, in dem beide Teile platziert wurden,
+            // plus Dicken und ein Zuschlag - eine Kante direkt auf der anderen
+            // darf nicht als offen gelten, ein weit entferntes Teil aber auch
+            // nicht stillschweigend kleben.
+            let radius = 2.0 * (self.abwicklung[oben_ti].abstand + self.abwicklung[unten_ti].abstand)
+                + 2.0 * (o.vorgabe.material.dicke_m + u.vorgabe.material.dicke_m)
+                + 1e-3;
+            let (zone, ohne) = crate::klebung::Zone::flaeche(
+                &format!("{} auf {}", o.name, u.name),
+                &s.x,
+                &s.dreiecke,
+                o.punkte.clone(),
+                u.punkte.clone(),
+                radius,
+                paar,
+            );
+            aus.push((zone, ohne));
+        }
+        aus
     }
 
     /// Lage des Musterpunkts `q` (mm) von Teil `ti` (Index in [`Self::netz`]).
@@ -830,7 +892,8 @@ pub fn platziere_mit(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen, we
     };
 
     let mut abwicklung = Vec::new();
-    for (a, &(q, hoch, reich)) in angaben.iter().zip(&anker) {
+    let mut klebt: Vec<(usize, usize)> = Vec::new();
+    for (ti, (a, &(q, hoch, reich))) in angaben.iter().zip(&anker).enumerate() {
         let ab = abstand(a);
         let prisma = prismen.iter().position(|(x, _)| *x == ab).unwrap_or(0);
         let radius = if a.zone == Zone::Hals { huellen.hals_radius + ab } else { 0.0 };
@@ -868,7 +931,21 @@ pub fn platziere_mit(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen, we
             hals_naht: huellen.hals_naht,
             armumriss,
             dicke: a.dicke,
+            abstand: ab,
         });
+        if let Some(ziel) = &a.klebt_auf {
+            // Der Name muss ein platziertes Teil sein; Teilnamen wie in der
+            // Nahtliste, also auch der Name hinter dem letzten " - ".
+            let treffer: Vec<usize> = (0..teile.len())
+                .filter(|&i| teile[i].teil == *ziel || teile[i].teil.rsplit(" - ").next() == Some(ziel.as_str()))
+                .collect();
+            match treffer[..] {
+                [u] if u == ti => return Err(format!("{}: klebt auf sich selbst", a.teil)),
+                [u] => klebt.push((ti, u)),
+                [] => return Err(format!("{}: klebt auf unbekanntes Teil {ziel:?}", a.teil)),
+                _ => return Err(format!("{}: Klebeziel {ziel:?} ist mehrdeutig", a.teil)),
+            }
+        }
     }
 
     // Weite der Rumpfhülle: Sind die Rumpfteile in einer Höhe zusammen
@@ -933,6 +1010,7 @@ pub fn platziere_mit(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen, we
         rumpf_hoehen,
         mitte,
         weite,
+        klebt,
     })
 }
 
@@ -973,6 +1051,12 @@ mod tests {
         let k = &l.angaben[2];
         assert_eq!((k.umfang_grad, k.hoehe), (180.0, (Hoehenbezug::Null, 1.4)));
         assert!((k.umfang_bogen + 0.045).abs() < 1e-12);
+        // Klebezone: `klebt <Teil>` liest den Namen, ein fehlender oder
+        // numerischer Name ist ein Fehler und kein stilles Nichtkleben.
+        let g = lies_lage("Verst | rumpf | - | vorn | 0 | klebt Vorn\n").unwrap();
+        assert_eq!(g.angaben[0].klebt_auf.as_deref(), Some("Vorn"));
+        assert!(lies_lage("Verst | rumpf | - | vorn | 0 | klebt").is_err());
+        assert!(lies_lage("Verst | rumpf | - | vorn | 0 | klebt 3").is_err());
         assert!(lies_lage("X | bein | - | 0 | 0").is_err());
         assert!(lies_lage("X | rumpf | - | vorn | 0 | quer").is_err());
     }
