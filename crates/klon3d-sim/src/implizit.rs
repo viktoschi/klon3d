@@ -101,11 +101,13 @@ fn m3_inv(m: &M3) -> M3 {
 /// Einstellungen des impliziten Wegs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImplizitParameter {
-    /// Zeitschritte je Bild (CLO: Bild 1/30 s, 1 bzw. 5 Teilschritte).
+    /// Substeps per frame (CLO: frame 1/30 s; preset `Nonlinear` five
+    /// substeps, `Normal` one).
     pub schritte_je_bild: usize,
-    /// Höchstzahl der CG-Iterationen je Lösung (CLO: 50).
+    /// Maximum number of CG iterations per solve (CLO: 50).
     pub cg_max: usize,
-    /// Abbruch bei ‖r‖ ≤ tol·‖b‖ (CLO „Restgröße“ 1e-5).
+    /// Stop at ‖r‖ ≤ tol·‖b‖ (CLO "residual"; `Nonlinear` 1e-5, `Normal`
+    /// 1e-4).
     pub cg_toleranz: f64,
     /// Nahtfeder (N/m), CLO `fSeamSpringK` 500 000 g/s².
     pub naht_k: f64,
@@ -141,7 +143,12 @@ pub struct ImplizitParameter {
 impl Default for ImplizitParameter {
     fn default() -> Self {
         ImplizitParameter {
-            schritte_je_bild: 1,
+            // CLO preset `Nonlinear.smp`: five substeps, residual 1e-5.
+            // With one substep a 5.5 % Radical band on the 2026.1 body does not
+            // settle and sits 2…4 % off the tape-measure circumference; the
+            // error falls monotonically with the number of substeps
+            // (0.06 % at five).
+            schritte_je_bild: 5,
             cg_max: 50,
             cg_toleranz: 1e-5,
             naht_k: 500.0,

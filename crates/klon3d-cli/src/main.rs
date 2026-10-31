@@ -981,7 +981,7 @@ fn befehl_koerper(args: &[String]) -> ExitCode {
         (hi - lo) / 10.0
     );
     if let Some(e) = &k.kette {
-        let m = e.werte();
+        let m = &e.werte;
         let soll = |n: &str| smis.wert(n).map_or("–".to_string(), |v| format!("{v:.2}"));
         println!("  Maße am Körper (cm, Soll aus der Maßdatei):");
         for (was, j, name) in [
