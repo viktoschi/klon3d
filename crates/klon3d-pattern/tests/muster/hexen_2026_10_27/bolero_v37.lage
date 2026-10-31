@@ -1,0 +1,26 @@
+# Lage der Teile von bolero_v37.sm2d vor dem Naehen (klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit, Befund 100)
+#
+# Teil | Zone | Bezugspunkt | Umfang | Hoehe | Optionen
+# Umfang am Rumpf und Hals in Grad von oben: 0 vorn, 90 links, 180 hinten, 270 rechts (Seiten der Traegerin),
+# mit "cm" als Bogenlaenge; am Arm: 0 oben, 90 vorn, Hoehe dort ab dem Schulterpunkt laengs der Armachse.
+# Hoehe am Rumpf in cm vom seitlichen Halspunkt aus.
+#
+# Zeichenweise wie die Blusen derselben Autorin: Vorderteile von aussen gesehen, Rueckenteil und Aermel gespiegelt.
+# Das Rueckenteil ist ein Teil ueber beide Seiten; RNP (hintere Mitte am Hals) liegt 2,24 cm unter RN. Die
+# Vorderteile reichen nicht bis zur vorderen Mitte (offene Front): ihr Halspunkt VN liegt 8,2 cm neben ihr (in beiden
+# Rahmen ist die Mitte x = 10 bzw. 90). Die Aermel haengen mit dem Kugelscheitel SPT am Schulterpunkt; der Saum (FSM)
+# liegt 39 cm tiefer, dort sitzt die Manschette mit ihrer Mitte MM oben auf dem Arm. Abstand 0,5 cm am Arm wie bei
+# den Blusen. Nicht platziert: Stehkragen gestuft (aufgeklebt), Hilfsteile.
+
+abstand 2
+
+Rueckenteil 1x           | rumpf | RNP | hinten     | hals seitlich -2,24 | gespiegelt
+Vorderteil links 1x      | rumpf | VN  | vorn +8,2cm | hals seitlich 0 |
+Vorderteil rechts 1x     | rumpf | VNr | vorn -8,2cm | hals seitlich 0 |
+
+Bischofaermel links 1x   | arm links  | SPT  | oben | 0  | gespiegelt abstand 0,5
+Bischofaermel rechts 1x  | arm rechts | SPTr | oben | 0  | gespiegelt abstand 0,5
+Manschette links 1x      | arm links  | MM   | oben | 39 | gespiegelt abstand 0,5
+Manschette rechts 1x     | arm rechts | MMr  | oben | 39 | gespiegelt abstand 0,5
+
+Stehkragen Innenlage 1x  | hals | KRP | hinten | hals seitlich -2,24 | abstand 3

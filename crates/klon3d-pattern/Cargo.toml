@@ -1,0 +1,15 @@
+[package]
+name = "klon3d-pattern"
+description = "Parser und Auswertung fuer Seamly2D-Muster (.sm2d)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+quick-xml = { workspace = true, features = ["serialize"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]

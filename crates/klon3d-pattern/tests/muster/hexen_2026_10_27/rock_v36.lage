@@ -1,0 +1,18 @@
+# Lage der Teile von rock_v36.sm2d vor dem Naehen (klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit, Befund 100)
+#
+# Teil | Zone | Bezugspunkt | Umfang | Hoehe | Optionen
+# Hoehe in cm vom seitlichen Halspunkt aus; die Taille liegt 37 cm darunter (height_neck_side 135 - height_waist_side 98).
+#
+# Die Bahnen sind als Faecher um die Seitennaehte gezeichnet: die Vorderbahnen mit senkrechter vorderer Mitte (T0_CF),
+# die Hinterbahnen um 67,11 Grad gedreht (hintere Mitte TL2_CB -> KN_CBL bzw. TR2_CB -> KN_CBR); "drehung" stellt die
+# hintere Mitte senkrecht. Die Taille liegt an den Seiten (TK) in Taillenhoehe; die vordere Mitte liegt 3,3 cm, die
+# hintere 5,9 cm tiefer. Die Bahnen sind von innen gesehen gezeichnet (gespiegelt), der Bund von aussen. Bund 1 mm
+# nach der Musterbeschreibung, Bahnen 0,4 mm. Nicht platziert: Schlitzblenden, Verstaerkungen, Querriegel.
+
+abstand 2
+
+1 BUND - 1 mm einlagig, ganzer Umfang, Naht hinten | rumpf | B_CF   | vorn   | hals seitlich -37    | dicke 1,0
+2 VORNE RECHTS - obere Lage an CF                   | rumpf | T0_CF  | vorn   | hals seitlich -40,29 | gespiegelt
+3 VORNE LINKS - untere Lage an CF                   | rumpf | T0_CF  | vorn   | hals seitlich -40,29 | gespiegelt
+4 HINTEN RECHTS - obere Lage an CB                  | rumpf | TL2_CB | hinten | hals seitlich -42,92 | gespiegelt drehung -67,11
+5 HINTEN LINKS - untere Lage an CB                  | rumpf | TR2_CB | hinten | hals seitlich -42,92 | gespiegelt drehung 67,11

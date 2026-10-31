@@ -1,0 +1,556 @@
+//! `klon3d anziehen`: ein Muster um den Körper der Maßdatei legen und am
+//! Körper anziehen (Stufe 4c, Befunde 95, 96).
+//!
+//! Muster → Netz mit Nahtliste → Körper aus der Maßdatei (Formungskette) mit
+//! Segmenten und Landmarken → Hüllkörper → Lagedatei → Szene → anziehen:
+//! Nähte mit begrenzter Geschwindigkeit schließen, dabei Körperpunkt gegen
+//! Stoffdreieck, gehalten (ohne Schwerkraft), dann ruhen mit voller
+//! Schwerkraft; die letzten 10 s der Ruhe sind die Haltephase (ADR-023).
+//! Ausgabe: Nahtabstände je Naht, tiefster Punkt, auf Wunsch `koerper.obj`,
+//! `anfang.obj`, `ende.obj` (mm) in einem Ordner.
+//!
+//! Mit `--zprj` kommt der Körper stattdessen aus CLOs Projekt: der `body` der
+//! `.avt` (Befund 119) und die Segment- und Landmarkenlisten aus CLOs
+//! `Resizing`-Ordner (Befund 120). Das ist derselbe Körper, den CLO selbst
+//! simuliert — mit der Prüfung aus [`klon3d_koerper::anordnung_clo`].
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use klon3d_koerper::anordnung_clo::{aus_clo_koerper, CloNummern};
+use klon3d_koerper::koerper::{anordnung, aus_smis, ordner};
+use klon3d_mesh::{vernetze, Parameter};
+use klon3d_pattern::geom::Auswertung;
+use klon3d_pattern::kanten::Kurvenquelle;
+use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
+use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
+use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
+use klon3d_sim::{
+    ausgabe, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material, Simparameter, Szene,
+    Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
+};
+
+const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
+                      [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
+                      [--material radical|retifist] [--obj <ordner>] [--ordner <Resizing>] \
+                      [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
+
+fn fehler(m: impl std::fmt::Display) -> ExitCode {
+    eprintln!("{m}");
+    ExitCode::FAILURE
+}
+
+pub fn befehl_anziehen(args: &[String]) -> ExitCode {
+    let mut muster_pfad: Option<PathBuf> = None;
+    let (mut masse, mut naehte, mut lage, mut obj): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) =
+        (None, None, None, None);
+    let mut gegen_lage: Option<PathBuf> = None;
+    let mut ohne_weite = false;
+    let mut zprj: Option<PathBuf> = None;
+    let mut resizing = ordner();
+    let mut ablauf = Anziehen::default();
+    let mut material: Material = RADICAL_RUBBER_04;
+    let mut offen_zeigen = false;
+    let mut xpbd = false;
+    let mut selbstkollision = false;
+    let mut schnitte_an_naehten = false;
+    let (mut anfang, mut bilder, mut zeiten): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--ohne-koerperpunkte" {
+            ablauf.koerperpunkt_durchgaenge = 0;
+            i += 1;
+            continue;
+        }
+        if a == "--offen" {
+            offen_zeigen = true;
+            i += 1;
+            continue;
+        }
+        if a == "--ohne-weite" {
+            ohne_weite = true;
+            i += 1;
+            continue;
+        }
+        // Stoff gegen Stoff wie CLO (Befund 116); nur im impliziten Rechenweg.
+        if a == "--selbstkollision" {
+            selbstkollision = true;
+            i += 1;
+            continue;
+        }
+        // Durchdringungen auch zwischen Nahtpartnern suchen, wie CLO (Befund 116).
+        if a == "--schnitte-an-naehten" {
+            schnitte_an_naehten = true;
+            i += 1;
+            continue;
+        }
+        if !a.starts_with("--") {
+            if muster_pfad.is_some() {
+                return fehler(format!("unerwartetes Argument {a:?}\n{AUFRUF}"));
+            }
+            muster_pfad = Some(PathBuf::from(a));
+            i += 1;
+            continue;
+        }
+        let Some(w) = args.get(i + 1) else { return fehler(format!("{a} ohne Wert\n{AUFRUF}")) };
+        match a {
+            "--masse" => masse = Some(PathBuf::from(w)),
+            "--zprj" => zprj = Some(PathBuf::from(w)),
+            "--naehte" => naehte = Some(PathBuf::from(w)),
+            "--lage" => lage = Some(PathBuf::from(w)),
+            "--gegen-lage" => gegen_lage = Some(PathBuf::from(w)),
+            "--obj" => obj = Some(PathBuf::from(w)),
+            "--ordner" => resizing = PathBuf::from(w),
+            "--naehbilder" => match w.parse() {
+                Ok(n) => ablauf.naehbilder = n,
+                Err(_) => return fehler(format!("--naehbilder {w:?}: keine Zahl")),
+            },
+            "--einschwingen-min" => match w.parse() {
+                Ok(n) => ablauf.einschwingen_min = n,
+                Err(_) => return fehler(format!("--einschwingen-min {w:?}: keine Zahl")),
+            },
+            "--rechenweg" => match w.as_str() {
+                "implizit" => xpbd = false,
+                "xpbd" => xpbd = true,
+                _ => return fehler(format!("--rechenweg {w:?}: implizit oder xpbd")),
+            },
+            "--anfang" => anfang = Some(PathBuf::from(w)),
+            "--bilder" => bilder = Some(PathBuf::from(w)),
+            "--zeiten" => zeiten = Some(PathBuf::from(w)),
+            "--einschwingen-max" => match w.parse() {
+                Ok(n) => ablauf.einschwingen_max = n,
+                Err(_) => return fehler(format!("--einschwingen-max {w:?}: keine Zahl")),
+            },
+            "--cg-max" => match w.parse() {
+                Ok(n) => ablauf.cg_max = n,
+                Err(_) => return fehler(format!("--cg-max {w:?}: keine Zahl")),
+            },
+            "--naht-k" => match w.replace(',', ".").parse() {
+                Ok(v) => ablauf.naht_k = v,
+                Err(_) => return fehler(format!("--naht-k {w:?}: keine Zahl")),
+            },
+            "--schwerkraft-naehen" => match w.replace(',', ".").parse() {
+                Ok(v) => ablauf.schwerkraft_naehen = v,
+                Err(_) => return fehler(format!("--schwerkraft-naehen {w:?}: keine Zahl")),
+            },
+            "--naehen" => match w.replace(',', ".").parse() {
+                Ok(v) => ablauf.naht_geschwindigkeit = v,
+                Err(_) => return fehler(format!("--naehen {w:?}: keine Zahl")),
+            },
+            "--material" => match Material::nach_namen(w) {
+                Some(m) => material = m,
+                None => return fehler(format!("--material {w:?}: radical oder retifist")),
+            },
+            _ => return fehler(format!("unbekannte Option {a:?}\n{AUFRUF}")),
+        }
+        i += 2;
+    }
+    let Some(muster_pfad) = muster_pfad else { return fehler(AUFRUF) };
+
+    // Muster und seine eigenen Maße.
+    let muster = match klon3d_pattern::read_path(&muster_pfad) {
+        Ok(m) => m,
+        Err(e) => return fehler(format!("{}: {e}", muster_pfad.display())),
+    };
+    let neben = |p: &str| {
+        let p = Path::new(p);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            muster_pfad.parent().unwrap_or(Path::new(".")).join(p)
+        }
+    };
+    let Some(mess_muster) = muster.measurements.as_deref().map(neben) else { return fehler("Muster nennt keine Maßdatei") };
+    let ev = match Auswertung::lade(&muster, &mess_muster) {
+        Ok(e) => e,
+        Err(e) => return fehler(format!("{}: {e}", mess_muster.display())),
+    };
+    let naehte_pfad = naehte.unwrap_or_else(|| muster_pfad.with_extension("naehte"));
+    let defs = match std::fs::read_to_string(&naehte_pfad).map_err(|e| e.to_string()).and_then(|t| lies_nahtliste(&t).map_err(|e| e.to_string())) {
+        Ok(d) => d,
+        Err(e) => return fehler(format!("{}: {e}", naehte_pfad.display())),
+    };
+    let bericht = match pruefe_naehte(&ev, &defs, Kurvenquelle::Seamly) {
+        Ok(b) => b,
+        Err(e) => return fehler(format!("{}: {e}", naehte_pfad.display())),
+    };
+    let netz = match vernetze(&ev, Kurvenquelle::Seamly, &bericht.naehte, &Parameter::default()) {
+        Ok(n) => n,
+        Err(e) => return fehler(e),
+    };
+    let lage_pfad = lage.unwrap_or_else(|| muster_pfad.with_extension("lage"));
+    let liste = match std::fs::read_to_string(&lage_pfad).map_err(|e| e.to_string()).and_then(|t| lies_lage(&t)) {
+        Ok(l) => l,
+        Err(e) => return fehler(format!("{}: {e}", lage_pfad.display())),
+    };
+
+    // Körper: aus CLOs Projekt (`--zprj`) oder aus der Maßdatei.
+    //
+    // Beide Wege liefern dasselbe: Punkte und Dreiecke in Millimetern im
+    // CLO-Avatarraum und die Anordnung (Rumpf, Arme, Landmarken) dazu. Der
+    // Unterschied ist die Herkunft — und dass CLOs Körper schon die
+    // Simulationspose ist, während der geformte erst dorthin kommt.
+    let (punkte, dreiecke, an, herkunft) = match &zprj {
+        Some(pfad) => {
+            let projekt = match klon3d_pattern::zprj::Projekt::lies(pfad) {
+                Ok(p) => p,
+                Err(e) => return fehler(format!("{}: {e}", pfad.display())),
+            };
+            let Some(k) = projekt.koerper else {
+                return fehler(format!("{}: keine .avt mit einem Körper", pfad.display()));
+            };
+            let punkte: Vec<[f64; 3]> = k.punkte.iter().map(|q| [q.x, q.y, q.z]).collect();
+            let dreiecke: Vec<[usize; 3]> = k
+                .dreiecke
+                .iter()
+                .map(|d| [d[0] as usize, d[1] as usize, d[2] as usize])
+                .collect();
+            let nummern = match CloNummern::aus_ordner(&resizing) {
+                Ok(n) => n,
+                Err(e) => return fehler(format!("{}: {e}", resizing.display())),
+            };
+            let netz = klon3d_koerper::Netz { punkte: punkte.clone(), dreiecke: dreiecke.clone() };
+            let an = match aus_clo_koerper(&netz, &nummern) {
+                Ok(a) => a,
+                Err(e) => return fehler(format!("{}: {e}", pfad.display())),
+            };
+            let herkunft = format!(
+                "{} (CLO .avt), {} Punkte, {} Rumpf, {} + {} Arm",
+                pfad.display(),
+                punkte.len(),
+                an.rumpf.len(),
+                an.arme[0].len(),
+                an.arme[1].len()
+            );
+            (punkte, dreiecke, an, herkunft)
+        }
+        None => {
+            // Körper aus der Maßdatei (Vorgabe: die des Musters).
+            let masse = masse.unwrap_or(mess_muster);
+            let smis = match klon3d_pattern::lies_smis(&masse) {
+                Ok(s) => s,
+                Err(e) => return fehler(format!("{}: {e}", masse.display())),
+            };
+            let k = match aus_smis(&resizing, &|n| smis.wert(n)) {
+                Ok(k) => k,
+                Err(e) => return fehler(format!("Körper nicht formbar: {e}")),
+            };
+            let an = match anordnung(&resizing, &k.netz) {
+                Ok(a) => a,
+                Err(e) => return fehler(e),
+            };
+            let herkunft = format!("{} ({})", masse.display(), k.weg.name());
+            (k.netz.punkte, k.netz.dreiecke, an, herkunft)
+        }
+    };
+    let koerper = match Koerpernetz::aus_clo_mm(&punkte, &dreiecke, SUCHTIEFE) {
+        Ok(n) => n,
+        Err(e) => return fehler(format!("Körpernetz: {e}")),
+    };
+    let c = clo_nach_szene;
+    let huellen = match Huellen::neu(&Koerperteile {
+        punkte: &koerper.punkte,
+        dreiecke: &koerper.dreiecke,
+        rumpf: &an.rumpf,
+        arme: [&an.arme[0], &an.arme[1]],
+        hals_vorn: c(an.hals_vorn),
+        hals_hinten: c(an.hals_hinten),
+        hals_seitlich: an.hals_seitlich.map(c),
+        schulter: an.schulter.map(c),
+        ellbogen: an.ellbogen.map(c),
+    }) {
+        Ok(h) => h,
+        Err(e) => return fehler(format!("Hüllkörper: {e}")),
+    };
+    let p = match klon3d_sim::platzierung::platziere_mit(&netz, &liste, &huellen, !ohne_weite) {
+        Ok(p) => p,
+        Err(e) => return fehler(format!("{}: {e}", lage_pfad.display())),
+    };
+
+    // Nur vergleichen: je Teil der mittlere Abstand seiner Netzpunkte
+    // zwischen beiden Lagen, ohne zu rechnen.
+    if let Some(g) = &gegen_lage {
+        let andere = match std::fs::read_to_string(g).map_err(|e| e.to_string()).and_then(|t| lies_lage(&t)).and_then(|l| platziere(&netz, &l, &huellen)) {
+            Ok(q) => q,
+            Err(e) => return fehler(format!("{}: {e}", g.display())),
+        };
+        println!("{}: Lage {} gegen {}", muster_pfad.display(), lage_pfad.display(), g.display());
+        let mut summe = (0.0, 0usize);
+        for (ti, t) in p.netz.teile.iter().enumerate() {
+            let Some(tj) = andere.netz.teile.iter().position(|u| u.teil == t.teil) else {
+                println!("  {:<50} nur hier", t.teil);
+                continue;
+            };
+            let d: Vec<f64> = t
+                .punkte
+                .iter()
+                .map(|&q| {
+                    let (a, b) = (p.lage(ti, q), andere.lage(tj, q));
+                    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+                })
+                .collect();
+            let mittel = d.iter().sum::<f64>() / d.len().max(1) as f64;
+            let groesster = d.iter().cloned().fold(0.0, f64::max);
+            println!("  {:<50} mittel {:5.1} cm, größter {:5.1} cm", t.teil, mittel * 100.0, groesster * 100.0);
+            summe.0 += mittel;
+            summe.1 += 1;
+        }
+        for u in &andere.netz.teile {
+            if !p.netz.teile.iter().any(|t| t.teil == u.teil) {
+                println!("  {:<50} nur dort", u.teil);
+            }
+        }
+        println!("  Mittel über {} Teile: {:.1} cm", summe.1, summe.0 / summe.1.max(1) as f64 * 100.0);
+        return ExitCode::SUCCESS;
+    }
+
+    println!("{}", muster_pfad.display());
+    println!("  Körper       {}", herkunft);
+    println!("  Nahtliste    {} ({} Nähte)", naehte_pfad.display(), netz.naehte.len());
+    println!("  Lage         {} ({} Teile platziert, Abstand {:.1} cm)", lage_pfad.display(), p.netz.teile.len(), liste.abstand * 100.0);
+    if !p.weggelassen.is_empty() {
+        println!("  ohne Lage    {}", p.weggelassen.join(", "));
+    }
+    if !p.naehte_weggelassen.is_empty() {
+        println!("  Nähte weg    {}", p.naehte_weggelassen.join(", "));
+    }
+
+    // Je Teil das Material, in der Dicke der Lageangabe.
+    let vg = |name: &str| {
+        let dicke = p.netz.teile.iter().position(|t| t.teil == name).and_then(|ti| p.dicke(ti));
+        Teilvorgabe { material: dicke.map_or(material, |d| material.mit_dicke(d)), reduktion: 0.0 }
+    };
+    let dicken: Vec<String> = (0..p.netz.teile.len())
+        .filter_map(|ti| p.dicke(ti).map(|d| format!("{} {:.1} mm", p.netz.teile[ti].teil.rsplit(" - ").next().unwrap_or(""), d * 1e3)))
+        .collect();
+    println!("  Material     {} {:.1} mm{}", material.name, material.dicke_m * 1e3, if dicken.is_empty() { String::new() } else { format!("; {}", dicken.join(", ")) });
+    // XPBD: die Nahtfeder des Anziehens als Nachgiebigkeit in der Szene.
+    let naht_nachgiebigkeit = if xpbd { 1.0 / ablauf.naht_k } else { 0.0 };
+    let param = Simparameter { schwerkraft: [0.0, 0.0, -9.81], daempfung: 1.0, naht_nachgiebigkeit, ..Simparameter::default() };
+    let mut s = Szene::aus_netz(&p.netz, &vg, &|ti, q| p.lage(ti, q), vec![Koerper::netz(koerper.clone())], param);
+    if xpbd {
+        s.param.unterschritte = s.unterschritte_weich(WEICH_FAKTOR);
+        println!("  Rechenweg    XPBD (CpuReferenz), {} Unterschritte je Bild (weich, Faktor {WEICH_FAKTOR})", s.param.unterschritte);
+    }
+    // Gemeinsame Anfangslage aller Löser (Befund 109): Punkte in mm, in
+    // derselben Reihenfolge wie `anfang.obj`.
+    if let Some(a) = &anfang {
+        let t = match std::fs::read_to_string(a) {
+            Ok(t) => t,
+            Err(e) => return fehler(format!("{}: {e}", a.display())),
+        };
+        let x: Vec<[f64; 3]> = t
+            .lines()
+            .filter_map(|z| z.strip_prefix("v "))
+            .filter_map(|z| {
+                let w: Vec<f64> = z.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+                (w.len() >= 3).then(|| [w[0] * 1e-3, w[1] * 1e-3, w[2] * 1e-3])
+            })
+            .collect();
+        if x.len() != s.x.len() {
+            return fehler(format!("{}: {} Punkte, die Szene hat {}", a.display(), x.len(), s.x.len()));
+        }
+        s.x = x;
+        println!("  Anfangslage  {}", a.display());
+    }
+    let tiefster = |s: &Szene| s.x.iter().map(|&q| koerper.naechster_alle(q).abstand).fold(f64::INFINITY, f64::min);
+    println!("  Anfang       {} Punkte, tiefster Punkt {:+.1} mm (Kollider findet bis {:.0} mm)", s.x.len(), tiefster(&s) * 1e3, SUCHTIEFE * 1e3);
+    if let Some(o) = &obj {
+        if let Err(e) = std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("anfang.obj"), ausgabe::obj(&s))) {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        let mut t = String::from("# klon3d anziehen: Körper, Einheit mm\n");
+        for q in &koerper.punkte {
+            t += &format!("v {:.3} {:.3} {:.3}\n", q[0] * 1e3, q[1] * 1e3, q[2] * 1e3);
+        }
+        for d in &koerper.dreiecke {
+            t += &format!("f {} {} {}\n", d[0] + 1, d[1] + 1, d[2] + 1);
+        }
+        if let Err(e) = std::fs::write(o.join("koerper.obj"), t) {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+    }
+
+    let start = std::time::Instant::now();
+    // CG: Lösungen, Iterationen, nicht konvergiert (Befund 102).
+    let mut selbst_letztes = None;
+    let lauf = if xpbd {
+        rechnen(&mut s, &mut CpuReferenz::neu(), &ablauf, bilder.as_deref(), &|_| (0, 0, 0))
+    } else {
+        let st = |rw: &ImplizitCg| (rw.statistik.loesungen, rw.statistik.cg_iterationen, rw.statistik.nicht_konvergiert);
+        let mut rw = ImplizitCg::neu(ImplizitParameter { selbstkollision, selbst_schnitte_an_naehten: schnitte_an_naehten, ..ImplizitParameter::default() });
+        let l = rechnen(&mut s, &mut rw, &ablauf, bilder.as_deref(), &st);
+        if selbstkollision {
+            selbst_letztes = Some((rw.statistik.naehe_punkt_dreieck, rw.statistik.naehe_kante_kante, rw.statistik.selbst_stoesse));
+        }
+        l
+    };
+    let (erg, je_bild) = match lauf {
+        Ok(l) => l,
+        Err(e) => return fehler(e),
+    };
+    let cg = je_bild.iter().fold((0, 0, 0), |a, b| (a.0 + b.2 .0, a.1 + b.2 .1, a.2 + b.2 .2));
+    if erg.heraus > 0 {
+        println!("  heraus       {} Punkte vor dem Nähen aus dem Körper geschoben (tiefster {:.1} mm)", erg.heraus, erg.heraus_tiefe * 1e3);
+    }
+    println!(
+        "  angezogen    {} Bilder nähen ({} m/s, Nahtfeder {:.0} N/m, Schwerkraft {:.0} %, Körperpunkt gegen Stoffdreieck {}), {} Bilder Einschwingen ({}), {} Bilder Halt, {:.1} s",
+        ablauf.naehbilder,
+        ablauf.naht_geschwindigkeit,
+        ablauf.naht_k,
+        ablauf.schwerkraft_naehen * 100.0,
+        if ablauf.koerperpunkt_durchgaenge > 0 { "an" } else { "aus" },
+        erg.einschwingbilder,
+        if erg.eingeschwungen { "ruhig" } else { "Höchstzahl erreicht, sinkt noch" },
+        ablauf.haltebilder,
+        start.elapsed().as_secs_f64()
+    );
+    if !xpbd {
+        println!(
+            "  CG           {} Lösungen, im Mittel {:.0} Iterationen (höchstens {}), {} nicht konvergiert",
+            cg.0,
+            cg.1 as f64 / cg.0.max(1) as f64,
+            ablauf.cg_max,
+            cg.2
+        );
+    }
+    if let Some((tv, ee, st)) = selbst_letztes {
+        println!("  Selbstkoll.  letztes Bild: {tv} Paare Punkt–Dreieck, {ee} Kante–Kante, {st} Stöße zurückgesetzt");
+    }
+    // Wandzeit je Bild nach Phase: Median, P95, größte (ms).
+    for (name, von, bis) in [("Nähen", 0, ablauf.naehbilder), ("Einschwingen", ablauf.naehbilder, erg.halt_ab), ("Halt", erg.halt_ab, je_bild.len())] {
+        let mut ms: Vec<f64> = je_bild[von.min(bis)..bis].iter().map(|z| z.1).collect();
+        if ms.is_empty() {
+            continue;
+        }
+        ms.sort_by(f64::total_cmp);
+        let q = |p: f64| ms[((ms.len() - 1) as f64 * p).round() as usize];
+        println!("  Zeit {name:<12} {} Bilder, Median {:.1} ms, P95 {:.1} ms, größte {:.1} ms", ms.len(), q(0.5), q(0.95), ms[ms.len() - 1]);
+    }
+    if let Some(z) = &zeiten {
+        let mut t = String::from("# bild phase ms cg_loesungen cg_iterationen nicht_konvergiert\n");
+        for (b, ms, c) in &je_bild {
+            let ph = if *b <= ablauf.naehbilder { "n" } else if *b <= erg.halt_ab { "e" } else { "h" };
+            t += &format!("{b} {ph} {ms:.3} {} {} {}\n", c.0, c.1, c.2);
+        }
+        if let Err(e) = std::fs::write(z, t) {
+            return fehler(format!("{}: {e}", z.display()));
+        }
+    }
+    println!(
+        "  Ende         mittlere Geschwindigkeit {:.4} m/s, tiefster Punkt {:+.2} mm",
+        messung::mittlere_geschwindigkeit(&s),
+        tiefster(&s) * 1e3
+    );
+    if messung::mittlere_geschwindigkeit(&s) > 0.01 {
+        // Nicht in Ruhe: wo der Stoff noch läuft (schnellstes Teil, schnellster Punkt).
+        let mut je: Vec<(f64, &str, [f64; 3])> = s
+            .teile
+            .iter()
+            .map(|t| {
+                let r = t.punkte.clone();
+                let i = r.clone().max_by(|&a, &b| {
+                    let (va, vb) = (s.v[a], s.v[b]);
+                    (va[0] * va[0] + va[1] * va[1] + va[2] * va[2]).total_cmp(&(vb[0] * vb[0] + vb[1] * vb[1] + vb[2] * vb[2]))
+                });
+                let mittel = r.clone().map(|i| (s.v[i][0].powi(2) + s.v[i][1].powi(2) + s.v[i][2].powi(2)).sqrt()).sum::<f64>() / r.len() as f64;
+                (mittel, t.name.as_str(), i.map_or([0.0; 3], |i| s.x[i]))
+            })
+            .collect();
+        je.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (v, name, x) in je.iter().take(3) {
+            println!("  läuft noch   {name}: Mittel {v:.3} m/s, schnellster Punkt bei ({:.1}, {:.1}, {:.1}) cm", x[0] * 100.0, x[1] * 100.0, x[2] * 100.0);
+        }
+    }
+    if !erg.sinken.is_empty() {
+        let sinken = &erg.sinken;
+        let dauer = ablauf.haltebilder as f64 * s.param.bild_dt;
+        let (name, dz) = &sinken[0];
+        println!("  Halt         in {dauer:.1} s Haltephase sinkt am stärksten {name}: {:+.1} mm (Mittel des Teils; ADR-023: höchstens 5 mm)", dz * 1e3);
+        for (name, dz) in sinken.iter().skip(1).take(4).filter(|(_, dz)| *dz > 5e-3) {
+            println!("               {name}: {:+.1} mm", dz * 1e3);
+        }
+    }
+    println!();
+    println!("  Naht   Paare  Median mm  größter mm  über 10 mm");
+    let (mut alle, mut zu) = (0usize, 0usize);
+    for (kennung, mut d) in messung::nahtabstaende(&s, &p.netz) {
+        let offen = d.iter().filter(|&&x| x > 0.01).count();
+        alle += d.len();
+        zu += d.len() - offen;
+        d.sort_by(f64::total_cmp);
+        println!("  {kennung:<5} {:6} {:10.1} {:11.1} {:11}", d.len(), d[d.len() / 2] * 1e3, d[d.len() - 1] * 1e3, offen);
+    }
+    println!("  {zu} von {alle} Nahtpaaren bis 10 mm ({:.1} %)", 100.0 * zu as f64 / alle.max(1) as f64);
+    if offen_zeigen {
+        // Jedes Paar über 10 mm: Naht, Teile, Lage beider Punkte (cm).
+        println!();
+        println!("  offene Paare (über 10 mm), Lage in cm (x links, y hinten, z oben):");
+        for n in &p.netz.naehte {
+            for (k, (tn, pp)) in n.paare().enumerate() {
+                let i = s.teile[tn.teil_a].punkte.start + pp.a as usize;
+                let j = s.teile[tn.teil_b].punkte.start + pp.b as usize;
+                let (a, b) = (s.x[i], s.x[j]);
+                let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                if d > 0.01 {
+                    let teil = |t: usize| p.netz.teile[t].teil.rsplit(" - ").next().unwrap_or("").to_string();
+                    println!(
+                        "    {:<6} Paar {k:3} {:6.1} mm  {} ({:.1}, {:.1}, {:.1})  {} ({:.1}, {:.1}, {:.1})",
+                        n.kennung, d * 1e3, teil(tn.teil_a), a[0] * 100.0, a[1] * 100.0, a[2] * 100.0,
+                        teil(tn.teil_b), b[0] * 100.0, b[1] * 100.0, b[2] * 100.0
+                    );
+                }
+            }
+        }
+    }
+    if let Some(o) = &obj {
+        if let Err(e) = std::fs::write(o.join("ende.obj"), ausgabe::obj(&s)) {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        println!("  geschrieben  {} (koerper.obj, anfang.obj, ende.obj; mm)", o.display());
+    }
+    ExitCode::SUCCESS
+}
+
+/// Rechnet das Anziehen mit einem Rechenweg. Je Bild die Wandzeit des
+/// Schritts in ms (ohne das Schreiben der Bilder) und die Kennzahl des
+/// Rechenwegs; auf Wunsch jedes 60. Bild, das Ende des Nähens und den
+/// erwarteten Anfang der Haltephase als `bild_NNNN.obj` (mm; Befund 109).
+fn rechnen<R: Anziehbar>(
+    s: &mut Szene,
+    rw: &mut R,
+    ablauf: &Anziehen,
+    bilder: Option<&Path>,
+    kennzahl: &dyn Fn(&R) -> (usize, usize, usize),
+) -> Result<(Angezogen, Vec<(usize, f64, (usize, usize, usize))>), String> {
+    if let Some(o) = bilder {
+        std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("bild_0000.obj"), ausgabe::obj(s))).map_err(|e| format!("{}: {e}", o.display()))?;
+    }
+    let halt_erwartet = ablauf.naehbilder + ablauf.einschwingen_min;
+    let mut je_bild = Vec::new();
+    let mut fehler: Option<String> = None;
+    let mut letzt = std::time::Instant::now();
+    let erg = anziehen(s, rw, ablauf, &mut |bild, s, rw| {
+        je_bild.push((bild, letzt.elapsed().as_secs_f64() * 1e3, kennzahl(rw)));
+        if bilder.is_some() && bild % 60 == 0 {
+            eprintln!("  Bild {bild}: {:.1} ms", je_bild[bild - 1].1);
+        }
+        if let Some(o) = bilder {
+            if bild % 60 == 0 || bild == ablauf.naehbilder || bild == halt_erwartet {
+                if let Err(e) = std::fs::write(o.join(format!("bild_{bild:04}.obj")), ausgabe::obj(s)) {
+                    fehler.get_or_insert(format!("{}: {e}", o.display()));
+                }
+            }
+        }
+        letzt = std::time::Instant::now();
+    });
+    if let Some(e) = fehler {
+        return Err(e);
+    }
+    if let Some(o) = bilder {
+        let n = je_bild.len();
+        std::fs::write(o.join(format!("bild_{n:04}.obj")), ausgabe::obj(s)).map_err(|e| format!("{}: {e}", o.display()))?;
+    }
+    Ok((erg, je_bild))
+}

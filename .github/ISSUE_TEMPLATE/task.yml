@@ -1,0 +1,54 @@
+name: Task
+description: A bounded, verifiable task that an agent can claim.
+title: "[Task] "
+labels: ["task", "ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Creating the issue does not claim it. Claim it with
+        `tools/task.sh claim <nr> <session>` – workflow in CONTRIBUTING.md.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What is observably different afterwards?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: How to tell it is right – test, command, measured value, tolerance. Also what is explicitly out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Scope, one file or folder per line, relative to the repository root. Folders end with /, no wildcards. task.sh uses this to detect overlaps.
+      placeholder: |
+        crates/klon3d-sim/src/friction.rs
+        crates/klon3d-sim/tests/friction.rs
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: "#12, #15"
+  - type: dropdown
+    id: data
+    attributes:
+      label: Test data
+      options:
+        - runs without CLO data
+        - needs CLO data (main machine only)
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Findings, prior work, rejected approaches.

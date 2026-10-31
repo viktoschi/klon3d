@@ -1,0 +1,45 @@
+//! Der Solver von klon3d (Stufe 4): der implizite Schritt mit CG wie CLO als
+//! Grundlage und CPU-Referenz, XPBD als Prüfweg (ADR-020); so angelegt, dass
+//! eine GPU-Fassung über `wgpu` dieselben Daten rechnet (ADR-018).
+//!
+//! * [`szene`] — Punkte, Constraints und Körper als Felder, gebaut aus dem
+//!   Schnittnetz von `klon3d-mesh` (Befund 33);
+//! * [`faerbung`] — Constraints in Farben ohne gemeinsame Punkte;
+//! * [`cpu`] — XPBD auf der CPU, `f64`, kleine Unterschritte (Prüfweg);
+//! * [`implizit`] — Rückwärts-Euler mit CG wie CLO (Befund 35, Grundlage);
+//! * [`koerper`] — Kollisionskörper: Zylinder und Körpernetz;
+//! * [`netzkoerper`] — das Körpernetz: vorzeichenbehafteter Abstand über
+//!   Pseudonormalen, Suche im Gitter;
+//! * [`platzierung`] — Schnittteile vor dem Nähen um den Körper legen
+//!   (Hüllkörper, Lagedatei, Abwicklung);
+//! * [`material`] — Stoffwerte aus CLO-Profilen in SI-Einheiten;
+//! * [`messung`] — Umfang, Dehnung, Nahtspalt, Energie;
+//! * [`roehre`] — der Prüffall von Schritt 4a;
+//! * [`selbstkollision`] — Stoff gegen Stoff wie CLO 2026.1 (Befund 116):
+//!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
+//! * [`vergleich`] — zwei Netze gegeneinander messen: Abstand jedes Knotens
+//!   zur Fläche des anderen, in beide Richtungen (Stufe 5);
+//! * [`ausgabe`] — OBJ und Dehnung je Dreieck.
+
+#![allow(non_snake_case)] // Tests sind deutsch benannt
+
+pub mod ausgabe;
+pub mod cpu;
+pub mod faerbung;
+pub mod implizit;
+pub mod koerper;
+pub mod material;
+pub mod messung;
+pub mod netzkoerper;
+pub mod platzierung;
+pub mod roehre;
+pub mod selbstkollision;
+pub mod szene;
+pub mod vergleich;
+
+pub use cpu::{CpuReferenz, Rechenweg};
+pub use implizit::{ImplizitCg, ImplizitParameter};
+pub use koerper::Koerper;
+pub use netzkoerper::Koerpernetz;
+pub use material::{Material, RADICAL_RUBBER_04, RETIFIST_NR_040};
+pub use szene::{Simparameter, Szene, Teilvorgabe, WEICH_FAKTOR};

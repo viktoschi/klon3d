@@ -1,0 +1,6 @@
+# Rust build output
+/target/
+
+# klon3d is an application: the lock file belongs in the repository.
+# Overrides the "*.lock" rule of the enclosing repository on the main machine.
+!/Cargo.lock

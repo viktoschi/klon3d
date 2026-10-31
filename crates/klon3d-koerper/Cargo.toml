@@ -1,0 +1,9 @@
+[package]
+name = "klon3d-koerper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+klon3d-pattern = { path = "../klon3d-pattern" }

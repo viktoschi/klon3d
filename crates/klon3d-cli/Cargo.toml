@@ -1,0 +1,17 @@
+[package]
+name = "klon3d-cli"
+description = "Kommandozeile fuer klon3d: Muster lesen, Punkte rechnen, vergleichen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "klon3d"
+path = "src/main.rs"
+
+[dependencies]
+klon3d-pattern = { path = "../klon3d-pattern" }
+klon3d-koerper = { path = "../klon3d-koerper" }
+klon3d-mesh = { path = "../klon3d-mesh" }
+klon3d-sim = { path = "../klon3d-sim" }

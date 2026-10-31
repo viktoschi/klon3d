@@ -1,0 +1,29 @@
+# Lage der Teile von bluse1_v25.sm2d vor dem Naehen (klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit)
+#
+# Teil | Zone | Bezugspunkt | Umfang | Hoehe | Optionen
+# Umfang am Rumpf und Hals in Grad von oben: 0 vorn, 90 links, 180 hinten, 270 rechts (Seiten der Traegerin),
+# mit "cm" als Bogenlaenge; am Arm: 0 oben, 90 vorn. Hoehe in cm vom seitlichen Halspunkt aus.
+#
+# Gleiche Konstruktion wie Bluse3 v2: VN bzw. RS am seitlichen Halspunkt, das Armloch (VA, RA) 21,74 cm tiefer.
+# Die Mittelteile hangen an der vorderen bzw. hinteren Mitte (VKB, Grund des Keyholes, 23,3 cm unter VN;
+# RNP 2,24 cm unter RS), die Seitenteile mit dem Armloch an der Seite. Vorderteile von aussen gezeichnet,
+# Rueckenteile und Aermel gespiegelt. Abstand 0,5 cm und 7 cm nach hinten fuer die Seitenteile wie bei der
+# Bluse3 v2 (Befund 95: die Arme haengen eng am Rumpf), nicht an diesem Muster eingestellt.
+# Nicht platziert (aufgeklebt): Trim Keyhole-Kante, Stehkragen Aussen, Donut, Scheiben.
+
+abstand 2
+
+Vorderteil Mitte Keyhole Links   | rumpf | VKB  | vorn | hals seitlich -23,3 |
+Vorderteil Mitte Keyhole Rechts  | rumpf | VKB  | vorn | hals seitlich -23,3 |
+Vorderteil Seite Links           | rumpf | VA_L | links  | hals seitlich -21,74 | abstand 0,5
+Vorderteil Seite Rechts          | rumpf | VA_R | rechts | hals seitlich -21,74 | abstand 0,5
+
+Rueckenteil Mitte Links          | rumpf | RNP  | hinten | hals seitlich -2,24 | gespiegelt
+Rueckenteil Mitte Rechts         | rumpf | RNP  | hinten | hals seitlich -2,24 | gespiegelt
+Rueckenteil Seite Links          | rumpf | RA_L | links +7cm  | hals seitlich -21,74 | gespiegelt abstand 0,5
+Rueckenteil Seite Rechts         | rumpf | RA_R | rechts -7cm | hals seitlich -21,74 | gespiegelt abstand 0,5
+
+Aermel Kurz Links                | arm links  | B1_AM0  | oben | 0 | gespiegelt abstand 0,5
+Aermel Kurz Rechts               | arm rechts | B1_AM0R | oben | 0 | gespiegelt abstand 0,5
+
+Stehkragen Innen (Keyhole)       | hals | KHM | hinten | hals seitlich -2,24 | abstand 3

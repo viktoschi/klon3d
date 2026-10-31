@@ -1,0 +1,25 @@
+# Nahtliste zu bluse1_v25.sm2d (Bluse1_Keyhole_parametrisch_v25), klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit
+# Gelesen aus den Kanten der Teile (klon3d naehte --kanten); gleicher Aufbau wie bluse3_v2.naehte (Punktnamen
+# RS/RT/VN/VT, Aermel AB1K/B1_AM0/AB2K), aber durchgehende Teilungsnaehte vorn statt Cups und Keyhole vorn.
+# Nicht in der Liste: Trim Keyhole-Kante, Stehkragen Aussen (aufgeklebt), Donut und Scheiben (Hilfsteile);
+# frei bleiben Keyhole-Kante VKB-VKW-VK0, Saum, Aermelsaum, Kragenoberkante.
+#
+# Kennung | Bezeichnung | Seite A | Seite B
+# Seite = Abschnitt + Abschnitt ...  (in Naehrichtung); Abschnitt = Teil: VON BIS v|r
+# v = vorwaerts in der Knotenreihenfolge des Teils, r = rueckwaerts
+
+N01 | Hintere Mitte | Rueckenteil Mitte Links: RNP RM1 r | Rueckenteil Mitte Rechts: RNP RM1 v
+N02L | Teilungsnaht hinten links (Rueckenteil Mitte / Seite) | Rueckenteil Mitte Links: RT_L RJM_L v | Rueckenteil Seite Links: RT_L RJS_L r
+N03L | Schulternaht links (Hals -> Schulterpunkt) | Rueckenteil Mitte Links: RS_L RT_L v + Rueckenteil Seite Links: RT_L RSP_L v | Vorderteil Mitte Keyhole Links: VN_L VT_L v + Vorderteil Seite Links: VT_L VSP_L v
+N04L | Seitennaht links (Achsel -> Saum) | Rueckenteil Seite Links: RA_L RH_L v | Vorderteil Seite Links: VA_L VH_L v
+N05L | Armloch links: Rumpf / Aermelkugel | Rueckenteil Seite Links: RA_L RSP_L r + Vorderteil Seite Links: VSP_L VA_L v | Aermel Kurz Links: AB1K B1_AM0 v + Aermel Kurz Links: B1_AM0 AB2K v
+N06L | Aermelnaht links (Achsel -> Saum) | Aermel Kurz Links: AB1K AH1 r | Aermel Kurz Links: AB2K AH2 v
+N07L | Teilungsnaht vorn links (VT -> Saum) | Vorderteil Mitte Keyhole Links: VT_L VJM_L v | Vorderteil Seite Links: VT_L VJS_L r
+N08 | Vordere Mitte unter dem Keyhole (VKB -> Saum) | Vorderteil Mitte Keyhole Links: VKB VM1 r | Vorderteil Mitte Keyhole Rechts: VKB VM1 v
+N02R | Teilungsnaht hinten rechts (Rueckenteil Mitte / Seite) | Rueckenteil Mitte Rechts: RT_R RJM_R r | Rueckenteil Seite Rechts: RT_R RJS_R v
+N03R | Schulternaht rechts (Hals -> Schulterpunkt) | Rueckenteil Mitte Rechts: RS_R RT_R r + Rueckenteil Seite Rechts: RT_R RSP_R r | Vorderteil Mitte Keyhole Rechts: VN_R VT_R r + Vorderteil Seite Rechts: VT_R VSP_R r
+N04R | Seitennaht rechts (Achsel -> Saum) | Rueckenteil Seite Rechts: RA_R RH_R r | Vorderteil Seite Rechts: VA_R VH_R r
+N05R | Armloch rechts: Rumpf / Aermelkugel | Rueckenteil Seite Rechts: RA_R RSP_R v + Vorderteil Seite Rechts: VSP_R VA_R r | Aermel Kurz Rechts: AB2RK B1_AM0R r + Aermel Kurz Rechts: B1_AM0R AB1RK r
+N06R | Aermelnaht rechts (Achsel -> Saum) | Aermel Kurz Rechts: AB1RK AH1R r | Aermel Kurz Rechts: AB2RK AH2R v
+N07R | Teilungsnaht vorn rechts (VT -> Saum) | Vorderteil Mitte Keyhole Rechts: VT_R VJM_R r | Vorderteil Seite Rechts: VT_R VJS_R v
+N13 | Halsnaht / Kragenansatz (rechts vorn -> hinten -> links vorn / Stehkragen Innen) | Vorderteil Mitte Keyhole Rechts: VK0_R VN_R r + Rueckenteil Mitte Rechts: RS_R RNP v + Rueckenteil Mitte Links: RNP RS_L v + Vorderteil Mitte Keyhole Links: VN_L VK0_L r | Stehkragen Innen (Keyhole): KUR0 KUL0 v

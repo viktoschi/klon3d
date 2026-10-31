@@ -1,0 +1,26 @@
+[package]
+name = "klon3d-view"
+description = "Betrachter fuer die Teileumrisse eines Seamly2D-Musters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Kein Abhaengigkeitsbaum: das Fenster entsteht mit der Win32-API direkt aus
+# der Standardbibliothek. Grund: der Betrachter soll ohne Treiber, ohne
+# Grafikstack und ohne Netz auf jedem Windows starten koennen.
+#
+# GDI+ wurde erprobt und wieder verworfen: `GdipCreatePen2` und
+# `GdipCreateFont` lieferten auf dieser Maschine `InvalidParameter`, ohne
+# erkennbare Ursache (19.10.2026, Windows 11 22621). GDI kann alles, was der
+# Betrachter braucht, und haengt an keiner Treiberkonfiguration.
+
+[dependencies]
+klon3d-pattern = { path = "../klon3d-pattern" }
+
+[[bin]]
+name = "klon3d-fenster"
+path = "src/main.rs"
+
+# Kein eigenes [profile.release]: Cargo nimmt nur das des Workspace und
+# warnte bei jedem Bau, dass dieses hier übergangen wird.

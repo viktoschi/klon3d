@@ -1,0 +1,33 @@
+# Nahtliste zu bluse3_v2.sm2d (Bluse3_Plunge_Cups_parametrisch_v2), klon3d Stufe 3
+# Quelle: Soll-Liste work/naehte/bluse3_v2_soll.json (20.10.2026), gelesen aus den Annotationen der Teile,
+# dem Block "Kontrolle" (K1-K17) und pruef_bluse3.py. Auflagen (Trim auf der Oeffnung, Kragen aussen auf
+# Kragen innen) und die Hilfsteile sind aufgeklebt und stehen nicht in der Liste.
+#
+# Kennung | Bezeichnung | Seite A | Seite B
+# Seite = Abschnitt + Abschnitt ...  (in Naehrichtung); Abschnitt = Teil: VON BIS v|r
+# v = vorwaerts in der Knotenreihenfolge des Teils, r = rueckwaerts
+
+N01 | Hintere Mitte (CB-Naht, durchgehend, ohne Reissverschluss) | Rueckenteil Mitte Links: RNP RM1 r | Rueckenteil Mitte Rechts: RNP RM1 v
+N02L | Teilungsnaht hinten links (Rueckenteil Mitte / Seite) | Rueckenteil Mitte Links: RT_L RJM_L v | Rueckenteil Seite Links: RT_L RJS_L r
+N03L | Schulternaht links (Hals -> Schulterpunkt) | Rueckenteil Mitte Links: RS_L RT_L v + Rueckenteil Seite Links: RT_L RSP_L v | Oberteil vorn Links: VN_L VT_L v + Oberteil seitlich Links: VT_L VSP_L v
+N04L | Seitennaht links (Achsel -> Saum) | Rueckenteil Seite Links: RA_L RH_L v | Oberteil seitlich Links: VA_L VC1_L v + Untercup Links: VC1T_L VC3T_L v + Band seitlich Links: VC3_L VH_L v
+N05L | Armloch links: Rumpf (Ruecken Seite + Oberteil seitlich) / Aermelkugel | Rueckenteil Seite Links: RA_L RSP_L r + Oberteil seitlich Links: VSP_L VA_L v | Aermel Kurz Links: AB1K B1_AM0 v + Aermel Kurz Links: B1_AM0 AB2K v
+N06L | Aermelnaht links (Unterarm, Achsel -> Saum) | Aermel Kurz Links: AB1K AH1 r | Aermel Kurz Links: AB2K AH2 v
+N07L | Teilungsnaht vorn oben links (VT -> Brustpunkt; Oberteil vorn / seitlich) | Oberteil vorn Links: VT_L VX_L v | Oberteil seitlich Links: VT_L VX2_L r
+N08L | Brustnaht vorn links (Brustpunkt -> Bruecke; Oberteil vorn / Untercup) | Oberteil vorn Links: VX_L VCXR_L v | Untercup Links: VX_L VCX_L r
+N09L | Brustnaht seitlich links (Brustpunkt -> Seitennaht; Oberteil seitlich / Untercup) | Oberteil seitlich Links: VX2_L VC1_L r | Untercup Links: VX_L VC1T_L v
+N10L | Unterbrustnaht seitlich links (Untercup / Band seitlich) | Untercup Links: VC3T_L VC8_L v | Band seitlich Links: VC3_L VC7_L r
+N11L | Untercup-Innenkante links (Kurve VC8 -> VCX; Untercup / Band Mitte) | Untercup Links: VC8_L VCX_L v | Band Mitte: VC8_L VCX_L r
+N12L | Teilungsnaht Band links (Band Mitte / Band seitlich, VC8 bzw. VC7 -> Saum) | Band Mitte: VC8_L VJMN_L v | Band seitlich Links: VC7_L VJSN_L r
+N02R | Teilungsnaht hinten rechts (Rueckenteil Mitte / Seite) | Rueckenteil Mitte Rechts: RT_R RJM_R r | Rueckenteil Seite Rechts: RT_R RJS_R v
+N03R | Schulternaht rechts (Hals -> Schulterpunkt) | Rueckenteil Mitte Rechts: RS_R RT_R r + Rueckenteil Seite Rechts: RT_R RSP_R r | Oberteil vorn Rechts: VN_R VT_R r + Oberteil seitlich Rechts: VT_R VSP_R r
+N04R | Seitennaht rechts (Achsel -> Saum) | Rueckenteil Seite Rechts: RA_R RH_R r | Oberteil seitlich Rechts: VA_R VC1_R r + Untercup Rechts: VC1T_R VC3T_R r + Band seitlich Rechts: VC3_R VH_R r
+N05R | Armloch rechts: Rumpf (Ruecken Seite + Oberteil seitlich) / Aermelkugel | Rueckenteil Seite Rechts: RA_R RSP_R v + Oberteil seitlich Rechts: VSP_R VA_R r | Aermel Kurz Rechts: AB2RK B1_AM0R r + Aermel Kurz Rechts: B1_AM0R AB1RK r
+N06R | Aermelnaht rechts (Unterarm, Achsel -> Saum) | Aermel Kurz Rechts: AB1RK AH1R r | Aermel Kurz Rechts: AB2RK AH2R v
+N07R | Teilungsnaht vorn oben rechts (VT -> Brustpunkt; Oberteil vorn / seitlich) | Oberteil vorn Rechts: VT_R VX_R r | Oberteil seitlich Rechts: VT_R VX2_R v
+N08R | Brustnaht vorn rechts (Brustpunkt -> Bruecke; Oberteil vorn / Untercup) | Oberteil vorn Rechts: VX_R VCXR_R r | Untercup Rechts: VX_R VCX_R v
+N09R | Brustnaht seitlich rechts (Brustpunkt -> Seitennaht; Oberteil seitlich / Untercup) | Oberteil seitlich Rechts: VX2_R VC1_R v | Untercup Rechts: VX_R VC1T_R r
+N10R | Unterbrustnaht seitlich rechts (Untercup / Band seitlich) | Untercup Rechts: VC3T_R VC8_R r | Band seitlich Rechts: VC3_R VC7_R v
+N11R | Untercup-Innenkante rechts (Kurve VC8 -> VCX; Untercup / Band Mitte) | Untercup Rechts: VC8_R VCX_R r | Band Mitte: VC8_R VCX_R v
+N12R | Teilungsnaht Band rechts (Band Mitte / Band seitlich, VC8 bzw. VC7 -> Saum) | Band Mitte: VC8_R VJMN_R r | Band seitlich Rechts: VC7_R VJSN_R v
+N13 | Halsnaht / Kragenansatz (Halsloch rechts vorn -> hinten -> links vorn / Stehkragen Innen) | Oberteil vorn Rechts: VK0_R VN_R r + Rueckenteil Mitte Rechts: RS_R RNP v + Rueckenteil Mitte Links: RNP RS_L v + Oberteil vorn Links: VN_L VK0_L r | Stehkragen Innen: KUR0 KUL0 v

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<smis>
+    <!--Measurements created with SeamlyMe v2026.9.7.144 (https://seamly.io/).-->
+    <version>0.3.4</version>
+    <read-only>false</read-only>
+    <notes>Eigene Masse, Messbuch-Sicherung vom 08.10.2026 (Mittel aller Messungen je Mass; neu gemessen: Schulter, Brust- und Rueckenbreite, Armloch, Seitenlaenge, Halspunkthoehe). 45 Masse fuer die Schnitte plus 38 weitere aus dem Messbuch (u. a. Schrittlaengen). shoulder_slope_neck_side_angle 28 aus Schultertiefe 9,5 und Abfall 5. height_shoulder_tip 130,17 ist das Mittel aus 136, 127,5 und 127 (kein Schnitt liest es). Alle Messbuch-Pruefungen ohne Konflikt. Eigene Masse @armhole_width_f / @armhole_width_b (Armlochbreite vorn / hinten, 6 / 4, Messbuch) fuer Bluse 1 v21 und Bluse 2 v25. Abgleich 09.10.2026 mit der Standardtabelle Frauen (Measurement Taking S. 121): waist_to_hip_side 23 -> 21, weil die eigenen Masse (Taillenhoehe 98 minus Hueftlinienhoehe 77 = 21, hinten 21, vorn 19) und die Tabelle (19,7-20,6) gegen 23 stehen. Alle anderen Werte sind eigene Messungen und bleiben. Buchwert 20.10.2026 (Wunsch der Anwenderin: nicht nachmessbar, Werte nach Buch fuer ihre Groesse): arm_shoulder_tip_to_armfold_line 14 -> 11,8 = Kugelhoehe des Aermelblocks Groesse E bei Naturmassen (Bloecke-Manual, Bogen SIZE E: Brust 94 / Taille 74 wie ihre 93 / 74; dort Oberarm 29,16 wie ihre 29, Kugel bei allen Folienstaerken rund 39-40 cm). BERICHTIGT 20.10.2026 abends (Tiefpruefung, werkstatt\uebergreifend\2026-10-20_tiefpruefung): zuerst stand hier 13,25 - das ist die Linie fuer 0,20 mm, nicht das Naturmass. Bloecke S. 21: bei Naturmass ist die obere Gradierung entfernt, bei duenner Folie steigt die Kugel hoeher (Bogen E: Natur 11,80 / 1,00 mm 11,95 / 0,45 mm 12,87 / 0,20 mm 13,24). The Female Catsuit (Autorin): 12. Die 14 war eine Einzelmessung; die Probe-Bluse v26 mit 14,4 cm Kugel stand oben 3 cm ab. Wirkt auf den Bolero (Grundkugel), bei den Blusen nur auf die Kontroll-Linie K9. Alter Stand: werkstatt\bolero\2026-10-20_kugel_auf_schulter\measurements_vor_2026-10-20.smis. 21.10.2026: Taille neu 70 statt 74 (Angabe der Anwenderin); Taillenboegen anteilig vorn 36,9 statt 39, hinten 34,1 statt 36 (Annahme, wie bisher 39 : 36). 23.10.2026: eigenes Mass @leg_thigh_lower_circ 39 (unterer Oberschenkel) aus dem Messbuch (b_thigh_lower_circ, Sicherung 08.10.) fuer die Struempfe v23; kein anderer Schnitt liest es.</notes>
+    <unit>cm</unit>
+    <pm_system>998</pm_system>
+    <personal>
+        <family-name/>
+        <given-name/>
+        <birth-date>2000-01-01</birth-date>
+        <gender>female</gender>
+        <email/>
+    </personal>
+    <body-measurements>
+        <!-- Grundmaße (vom Benutzer vorgegeben) -->
+        <m name="height" value="160"/>
+        <m name="bust_circ" value="92.67"/>
+        <m name="waist_circ" value="70"/>
+        <m name="hip_circ" value="90"/>
+        <!-- Standard-Oberkörper- & Brustmaße (Gr. 36/38) -->
+        <m name="neck_circ" value="37"/>
+        <m name="lowbust_circ" value="76"/>
+        <m name="highhip_circ" value="83"/>
+        <m name="head_circ" value="56"/>
+        <m name="shoulder_length" value="11"/>
+        <m name="shoulder_slope_neck_side_angle" value="28"/>
+        <m name="bustpoint_to_bustpoint" value="22"/>
+        <m name="bustpoint_to_lowbust" value="9"/>
+        <m name="lowbust_to_waist_f" value="10"/>
+        <m name="waist_to_highhip_side" value="5"/>
+        <m name="waist_to_hip_side" value="21"/>
+        <!-- Höhenmaße (Standard für 160 cm Körpergröße) -->
+        <m name="height_neck_side" value="135"/>
+        <m name="height_scapula" value="120"/>
+        <m name="height_bustpoint" value="111"/>
+        <m name="height_waist_side" value="98"/>
+        <m name="height_gluteal_fold" value="68.5"/>
+        <m name="height_knee" value="42"/>
+        <m name="height_calf" value="30"/>
+        <m name="height_ankle_high" value="11"/>
+        <m name="height_ankle" value="8"/>
+        <m name="leg_waist_side_to_floor" value="99"/>
+        <!-- Standard-Armmaße -->
+        <m name="arm_upper_circ" value="29"/>
+        <m name="arm_lower_circ" value="24"/>
+        <m name="arm_wrist_circ" value="16"/>
+        <m name="arm_shoulder_tip_to_wrist" value="53"/>
+        <!-- Standard-Bein- & Fußmaße (Gr. 36/38, Schuhgröße 37/38) -->
+        <m name="leg_thigh_upper_circ" value="54"/>
+        <m name="leg_thigh_mid_circ" value="48"/>
+        <m name="leg_knee_circ" value="36"/>
+        <m name="leg_knee_small_circ" value="31"/>
+        <m name="leg_calf_circ" value="33"/>
+        <m name="leg_ankle_high_circ" value="21"/>
+        <m name="leg_ankle_diag_circ" value="30"/>
+        <m name="foot_length" value="24"/>
+        <m name="foot_circ" value="22"/>
+        <m name="foot_instep_circ" value="24"/>
+        <!-- Armloch und Aermelkugel (v18/v22/v28, 02.10.2026): Standardwerte, bitte mit dem Messbuch nachmessen -->
+        <m name="neck_back_to_highbust_b" value="19"/>
+        <m name="across_back_b" value="30"/>
+        <m name="across_chest_f" value="28"/>
+        <m name="armscye_circ" value="41"/>
+        <m name="arm_shoulder_tip_to_armfold_line" value="11.8"/>
+        <m name="shoulder_tip_to_shoulder_tip_b" value="39"/>
+            <m name="height_shoulder_tip" value="130.17"/>
+        <m name="height_highhip" value="93"/>
+        <m name="height_hip" value="77"/>
+        <m name="neck_back_to_waist_b" value="40"/>
+        <m name="neck_front_to_waist_f" value="33.75"/>
+        <m name="neck_front_to_bust_f" value="20"/>
+        <m name="shoulder_slope_neck_side_length" value="5"/>
+        <m name="arm_shoulder_tip_to_wrist_bent" value="54"/>
+        <m name="crotch_length" value="70"/>
+        <m name="crotch_length_f" value="32"/>
+        <m name="crotch_length_b" value="38"/>
+        <m name="leg_crotch_to_floor" value="72"/>
+        <m name="leg_ankle_circ" value="22"/>
+        <m name="foot_width" value="10"/>
+        <m name="leg_crotch_to_ankle" value="63"/>
+        <m name="neck_back_to_bust_b" value="27"/>
+        <m name="armpit_to_waist_side" value="21.33"/>
+        <m name="bustpoint_to_neck_side" value="31"/>
+        <m name="bustpoint_to_waist" value="12"/>
+        <m name="neck_mid_circ" value="33"/>
+        <m name="arm_elbow_circ" value="24"/>
+        <m name="arm_armpit_to_wrist" value="40.5"/>
+        <m name="hand_palm_circ" value="19"/>
+        <m name="neck_back_to_across_back" value="17"/>
+        <m name="arm_shoulder_tip_to_elbow" value="32"/>
+        <m name="arm_shoulder_tip_to_elbow_bent" value="33"/>
+        <m name="arm_across_back_center_to_wrist_bent" value="74"/>
+        <m name="arm_above_elbow_circ" value="27"/>
+        <m name="bust_arc_f" value="56"/>
+        <m name="bust_arc_b" value="37"/>
+        <m name="waist_arc_f" value="36.9"/>
+        <m name="waist_arc_b" value="34.1"/>
+        <m name="highhip_arc_f" value="44"/>
+        <m name="highhip_arc_b" value="41"/>
+        <m name="hip_arc_f" value="44"/>
+        <m name="hip_arc_b" value="46"/>
+        <m name="waist_to_hip_f" value="19"/>
+        <m name="waist_to_hip_b" value="21"/>
+        <m name="@armhole_width_f" value="6" description="Armlochbreite vorn: Seitenpunkt bis Brustbreitenlinie auf Achselhoehe (Messbuch b_armhole_width_front, Measurement Taking S. 50)" full_name="Armlochbreite vorn"/>
+        <m name="@armhole_width_b" value="4" description="Armlochbreite hinten: Seitenpunkt bis Rueckenbreitenlinie auf Achselhoehe (Messbuch b_armhole_width_back, Measurement Taking S. 50)" full_name="Armlochbreite hinten"/>
+        <m name="@leg_thigh_lower_circ" value="39" description="Unterer Oberschenkel: waagrecht an der engsten Stelle des Oberschenkels, etwa 5 cm ueber dem Knie, knapp ueber der Kniescheibe (Messbuch b_thigh_lower_circ, Measurement Taking S. 112; Strumpfbuch S. 14; Bloecke-Manual S. 13). Fuer die Struempfe seit v23." full_name="Unterer Oberschenkel"/>
+    </body-measurements>
+</smis>

@@ -1,0 +1,10 @@
+# Agents work on Windows and Linux: always LF in the repository.
+* text=auto
+
+*.sh   text eol=lf
+*.bat  text eol=crlf
+
+*.zfab binary
+*.zprj binary
+*.png  binary
+*.jpg  binary

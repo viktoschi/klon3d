@@ -1,0 +1,473 @@
+# Plan: fit simulator in Rust
+
+Decision of 2026-10-18: **entirely in Rust**, without Blender at runtime.
+
+**Status: 2026-10-27.** Stages 0 and 1 are done, stage 2 except for the
+silhouette check (finding 24), stage 6 partly brought forward. In stage 3,
+boundary edges and seam pairs are done (finding 32), as are the mesh and seam subdivision
+(`klon3d-mesh`, finding 33); both acceptance tests on Bluse3 v2 have passed. From stage 4 on,
+the solver runs on the GPU with a CPU reference as the yardstick, and motion is
+a goal as stage 7 (ADR-018). In stage 4, the XPBD reference (finding 34) and
+the implicit step with CG like CLO (finding 35) are done on the tube; since 2026-10-27 the
+implicit step is the basis and XPBD remains a cross-check path
+(ADR-020). Since 2026-10-27 the shaped body is a mesh collision body
+in the solver (finding 94), and Bluse3 v2 can be placed around it and dressed
+onto it (4c largely done, findings 95, 96: 98.6% of seam pairs closed); with Bluse1 v25 and the strapless bustier v1,
+the same chain also dresses other patterns without per-pattern tuning, and everything holds by tension (finding 98:
+99.4 / 99.1 / 94.6%). Findings 17–24 changed the foundations of stages 2
+and 3 — they are incorporated below.
+
+## Starting point — what already exists
+
+| Exists | Where | Meaning for this plan |
+|---|---|---|
+| CLO base mesh (2026.1), 47,650 vertices | `C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female\BaseMesh.obj` | cm, body 164.15 cm tall, 76,298 triangles (group `body` 62,658, model 40,465 points) — **the basis** (finding 64; the 5.2 mesh is only a backup) |
+| CLO shaping data (2026.1) | there: `FeatureData.bd`, `ReducedVertexData.bd`, `PCA_weight.bd`, `..\Detail_*.txt` | finding 64: shaping matrices computed by regression at load time (PCA); specification `spez/formung_2026_1.md`. The 5.2 fields `ConvertingMat_*.bd` (finding 18) are only a backup |
+| `.sm2d` calculator (Python) | `D:\ai\spacebunny\schnitt.py` | reference for the target geometry, **not** a dependency |
+| Measurement file `.smis` | `Hexenensemble...\measurements.smis` | 85 measurements, 160 cm, bust 92.67, waist 74, hip 90, HighHip 83, underbust 76; reader done (finding 24) |
+| 528 real `.sm2d` patterns | `latex_schnitte\` | test material, 528/528 readable |
+| Formula engine (Rust) | `crates\klon3d-pattern\src\formula.rs` | part of stage 1, done |
+| Circumference measurement on the mesh | `crates\klon3d-koerper\src\lib.rs` | section loop, 4 tests green |
+| 2D pattern viewer | `crates\klon3d-view`, `klon3d-fenster.exe` | Win32 + GDI, PNG output — **diagnostic tool**, not stage 6 |
+
+**No longer needed:** rebuilding the MakeHuman body. Blender is used once as a
+data source (exporting the base body); after that it is out of the picture.
+
+## Scope
+
+**Will be built:** read pattern → 3D geometry → material → simulation → inspection output.
+
+**For latex and fabric** (ADR-021, 2026-10-27): klon3d should also simulate garments
+made of woven and knitted fabric from Seamly2D patterns, not just latex.
+Latex remains the first test case; every stage is built so that fabric is not
+ruled out. What fabric additionally requires is listed below in the section
+"Fabric alongside latex".
+
+**Also for CLO projects** (ADR-022, 2026-10-27): besides `.sm2d`, klon3d reads
+`.zprj` — pieces, seams, fabrics, placement and avatar — so that a CLO project can be
+dressed without a handwritten seam and placement file. Reading comes first;
+writing back has not been decided. See the section "Reading CLO projects".
+
+**Holding as in real life** (ADR-023, 2026-10-27): garments stay on solely through
+the tension of the rubber and friction on the skin, under full gravity —
+nothing is pinned. Aids during dressing are allowed if they only reproduce
+the act of dressing; afterwards, a hold phase under full gravity is part of
+acceptance (at least 10 s, no piece sinks more than 5 mm).
+
+**Not built:** 2D pattern editing beyond verification purposes, layout,
+grading, production-quality rendering.
+
+---
+
+## Stage 0 — Foundation (done)
+
+Rust 1.99.1 (MSVC) under `tools\rust`. Workspace with `klon3d-pattern`.
+Formula engine: lexer, recursive descent, QMuParser dialect, 9 tests green.
+
+## Stage 1 — Read `.sm2d` completely
+
+| Part | Content | Done when |
+|---|---|---|
+| Data model | `pattern`, `increments`, `draftBlock`, `pieces` | `male_shirt.sm2d` and `Bluse3_Plunge_Cups_parametrisch_v2.sm2d` parse |
+| XML reader | quick-xml, attributes as `Option<f64>` | — |
+| Point types | `single` `endLine` `alongLine` `normal` `shoulder` `height` `lineIntersectAxis` `curveIntersectAxis` `cutSpline` `modeling`; since finding 99 also `cutArc`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, `trueDarts` | points agree with `schnitt.py` to 0.01 mm |
+| Operations and sub-curves | `moving`, `rotation`, `flippingByAxis`, `flippingByLine` with point and curve copies (name + suffix); sub-curves of `cutSpline`/`cutSplinePath` and sub-arcs of `cutArc` for `Spl_`, `SplPath_`, `Arc_` | **done** (finding 99): Bolero v36/v37 and stocking v26 without errors, perimeters as in Seamly2D's own export (≤ 0.03 mm); open: sub-curves of `curveIntersectAxis`, L036 (18 measurements missing) |
+| Splines and arcs | `NodeSpline`, `NodeSplinePath`, arcs | — |
+| `idObject` resolution | piece nodes → outline paths | piece outlines close |
+| Seam allowance | `seamAllowance` bool, `width` as a formula, `<CSA>` | width computable |
+
+**Acceptance criterion:** the piece outlines of 10 patterns match `schnitt.py
+piece_outline`.
+
+## Stage 2 — Measurements and body
+
+| Part | Content | Status |
+|---|---|---|
+| `.smis` reader | `<m name value>`, units cm/mm/inch, `@` names, comments | **done** (`smis.rs`, 12 tests; finding 24) |
+| Circumference measurement | section loop that encloses the body axis, gaps ≤ 2 cm closed like a seam | **done for the torso** (findings 22, 25) |
+| Tape measure | convex hull of the section as in CLO (`massband.rs`), candidate selection for the five torso measurements, sampling | **done**: 21 of 22 reference values on the BaseMesh < 0.00001 cm, same candidates (finding 30) |
+| Body base | CLO's `BaseMesh.obj`, 47,650 points, 166.62 cm | **available** |
+| Shaping | `P = base mesh + F_last + Σ F_k · c_k` from the `.bd` fields | **built in**, 5 torso measurements + 8 height fields (finding 24) |
+| 58 measurements | all of CLO's measuring methods (`messung.rs`) | **done**: 57 of 58 on the BaseMesh ≤ 5·10⁻⁷ cm, Wrist +0.035 mm (finding 31) |
+| Shaping chain | BASE + DETAIL Human with calibration, symmetry, centering, `.avs`, hand correction, `.smis` mapping (`kette.rs`) | **done**: all test cases of the specification, against CLO ≤ 0.51 mm (finding 31); **wired up**: `klon3d koerper <measurements.smis> [--out]` shapes the body via `koerper.rs` (group `body` in mm with triangles, also the input for stage 4); if the chain's resizing data are missing, it falls back to `anpassen.rs` (test `koerper_weg`) |
+| Target person | `person.rs`: `.smis` → CLO fields, heights, measurement lines, active fields | **available** (finding 24) |
+| Measurement lines | material lines that move with the mesh (`spur.rs`) **or** fixed sections at the `.smis` target heights | **available** (findings 23/24) |
+| Reference measurements | 32 values of the `DETAIL_Advanced` stage (heights in cm, apex 119.41, waist 105.71, crotch 76.87) | **available** (finding 22) |
+| Acceptance | measured circumference hits the target value | **passed with the shaping chain** (finding 31): CLO measurement bust +0.03, underbust −0.00, waist +0.02, HighHip at CLO's position −0.01, hip −0.02; sampling waist −0.89, hip −0.01. The old route via `anpassen.rs` does not reach them with the tape measure (finding 30) |
+| Height frame | measurement heights from the floor: center the mesh before measuring (lowest point y = 0) | **available** in tape-measure mode; the contour route still cuts 1.95 cm too low (finding 30) |
+| Silhouette | self-intersection, dents on the shaped body | open |
+
+**Acceptance criterion:** circumferences on the mesh within ±1 cm of the `.smis` values
+(bust 92.67 / waist 74 / hip 90 / HighHip 83 / underbust 76). That is
+the criterion from the handover. Measured like a tape measure, as defined in
+`spez/massdefinitionen.md`; test
+`kette_clo::abnahme_aus_smis`; both numbers (CLO measurement at the candidate and
+sampling) lie within ±1 cm, HighHip applies at CLO's position (finding 31).
+
+**What findings 18/22 change:** the shaping is **linear in the coefficients**,
+and the fields ship with the CLO installation. The field order is
+the ID order of the measurements, the last field has the coefficient 1.0, and
+`DETAIL_Advanced_TotalHeight` reproduces `BaseMesh.obj` to 0.00014 cm.
+No hand-tuned deformation is needed — CLO's own fields are the
+template.
+
+**Integration (in order):**
+
+1. Load `BaseMesh.obj` and the 33 fields of `DETAIL_Advanced_TotalHeight`
+   (format: `int32 fields, int32 vectors`, then `f32` feature by feature).
+2. Check the reference vector `c_ref` (32 values, finding 22) and the starting body:
+   `P = G + F_last + Σ F_k c_ref` (G = base mesh) must reproduce the reference exactly.
+3. Measurement operator in cm: with `.smis` heights the section is taken **at the
+   target height** (bust 111 etc.), otherwise on the reference's material line
+   that moves with the mesh (finding 24).
+4. Jacobian of the **active fields**, numerically per round (difference step 1.0),
+   damped Newton `δ = (A + λI)⁻¹(m_target − m_actual)`, step rejection like CLO's
+   driver. The full 31-column solution diverged; it dragged calf, foot and
+   wrist along (finding 24).
+5. Acceptance: bust/underbust/waist/HighHip/hip within ±1 cm, body
+   not self-intersecting. **Reached** (finding 24): 14 rounds, 1.8 s,
+   error ≤ 0.006 cm. Still open: the silhouette check and the
+   crotch gap at 73 cm (open seam, stage 4).
+
+**What finding 25 changes:** the base mesh is **open at the seams**
+(4,170 open edges, 366 components). The torso section is therefore usually
+an open chain, not a ring. The length of the chain is already the
+circumference, though; only the closing piece across a gap of 0.02–1.25 cm is missing.
+`rumpf()` closes gaps up to 2 cm (finding 22) — this makes measuring possible at
+every torso height. Also, the bust lies at 120 cm, not at
+98 cm — the fixed heights in `abnahme.rs` are chosen wrongly.
+
+## Stage 3 — Pattern to mesh
+
+| Part | Content | Status |
+|---|---|---|
+| **Boundary edges** | seam line per piece split at the point nodes, length, notches, seam allowance per edge (`kanten.rs`) | **done** (finding 32) |
+| **Seam assignment** | seam list `<pattern>.naehte` next to the pattern: sides made of whole boundary edges, 1:1 up to M:N; `klon3d naehte` checks lengths, notches, coverage (`naehte.rs`) | **done** (finding 32); **seam suggestion** `klon3d naehte --vorschlag` (finding 101): Bluse3, Bluse1, bustier and skirt edge for edge like the hand-written list, direction and mirroring from the seam graph; open: pleats (bolero), slits |
+| **Triangulation** | seam line → triangle mesh per piece, approx. 10 mm edge length: boundary split by curvature, ear clipping, Lawson, Ruppert with a minimum angle of 25°, smoothing; exact on an integer grid (`klon3d-mesh`) | **done** (finding 33) |
+| **Subdivision** | subdivide both seam partners equally by **length fraction** as in CLO 2026.1 (§4 of the specification), point nodes of both sides merged up to 2 mm; result: point pairs per sub-seam; `klon3d netz` | **done** (finding 33) |
+| Seams | support springs between the partners, 6 mm overlap seam in the middle | flush seam with bending across the seam **done** (finding 34); the overlap seam comes with the glue zones |
+| Reduction | scale rest lengths: torso 5.5%, sleeves 1–2%, cuff 5% | **done** (finding 34): rest length × (1 − r), mass of the cut piece × (1 − r)²; if the reduction is already in the pattern (Bluse3), r = 0 |
+| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO 2026 *Gluing* (Glue Fill by outline, Glue Brush painted freely) | open |
+
+**Acceptance criterion:** all seam pairs of equal length, deviation ≤ 0.08 cm —
+the criterion from `pruef_bluse3.py`. **Passed** (finding 32,
+test `naehte::abnahme_stufe3_bluse3_v2`): 24 seam pairs, largest deviation
+N07 front upper panel seam −0.0737 cm (Seamly decomposition; with the
+drawn polyline −0.0758, as in `pruef_bluse3.py`).
+
+**The seam model per CLO 2026.1** (`spez/naehte_2026_1.md`):
+an outline is a list of lines from segment point to segment point; a
+seam side is (shape, start and end line with fraction, direction); a seam has
+two sides of 1…n seam sides each. The side sums are compared
+(Check Sewing Length: red from 5 mm or 10%); when sewing, equal
+length fractions are matched to each other. **Notches do not occur in the seam model.**
+Auto-Sewing 2026.1 pairs via piece types and edge types on the avatar
+(finding 71).
+
+**5.2, backup only (finding 19):** pairing via notches as `alpha` with the
+thresholds 0.1 and 0.03 — no longer present in 2026.1
+(finding 60).
+
+**Acceptance of mesh and subdivision** (agreed with the user on
+2026-10-20, test `klon3d-mesh/tests/bluse3_v2.rs`): mesh boundary within 0.01 cm of
+the boundary edge (position and length), mesh area = boundary polygon, minimum angle 25°
+(except in piece corners that are themselves sharper), edges about 10 mm, every
+sub-seam with the same number of boundary points in sequence on both sides, offset of merged
+points ≤ 2 mm. **Passed:** 28 pieces, 6,471 points, 10,734 triangles,
+smallest angle 25.1°, median of the inner edges 9.9 mm, 24 seams with 715
+point pairs, largest offset 0.25 mm (N02), 34 ms. In the pattern collection (6,193 pieces)
+every piece passes.
+
+**Still missing:** seam springs on the point pairs, partial stretches of an edge
+(CLO's Free Sewing), internal shapes (holes, internal lines) and
+darts as seam sides, an automatic seam list as a suggestion.
+
+**Meshes in the viewer:** `klon3d netz --svg` draws meshes and
+seam points, `--obj` writes them; `klon3d-fenster` does not show them yet.
+
+**For a 3D display of the seam** the viewer lacks the
+**3D projection**. `klon3d-view` only draws 2D so far.
+That is a separate step, not part of the pairing.
+
+## Stage 4 — Solver (the core)
+
+**Implicit step with CG like CLO** (backward Euler, preconditioned
+CG, contact filter; ADR-020, 2026-10-27); **XPBD** remains as a second,
+independent computation path for checks on the CPU (this supersedes ADR-009).
+The solver runs on the **GPU via `wgpu` compute shaders**; the
+**CPU reference** `ImplizitCg` (`f64`) with the same method is the
+yardstick (ADR-018). Reason: the goal also
+includes **motion** (stage 7), and that needs the computing power of the GPU.
+
+**Steps:**
+
+| Step | Content | Done when |
+|---|---|---|
+| **4a Tube with XPBD (cross-check path)** | crate `klon3d-sim`, Rust `f64`, data as arrays (struct of arrays), constraints ordered by graph coloring, substeps. Distance constraints from the mesh edges (finding 33) with rest length × (1 − reduction); seam constraints from the point pairs, bending also across the seams; gravity, damping; collision against a cylinder with friction from the physical load; position, displacement and correction kept separate (for f32). Test case: rectangle sewn into a tube, around a cylinder; `klon3d roehre` | **done** (finding 34): both fabrics, 0/5.5/10%, hoop strain −0.06 pp (tolerance ±0.5), seam 0.0000 mm, lies against the cylinder, mesh resolution 0.05 pp; the slip test follows Coulomb to 0.05%. Condition: **softness condition** α/h² ≥ 9·(wᵢ+wⱼ) — tube 116–434 substeps per frame |
+| **4a′ Tube, implicit with CG like CLO (CPU reference, basis)** | second computation path `ImplizitCg` in `klon3d-sim`: backward Euler, matrix-free PCG with 3×3 diagonal blocks, contact filter, normal force from the system, Coulomb friction, warm start; CLO setting of 1 step per frame, 50 CG iterations, seam spring 500 N/m | **done** (finding 35): tube, both fabrics at 5.5/10%, with the same acceptance as 4a, slip test at most 1.6% off the discrete path; frictionless, the same equilibrium as XPBD; blouse 13–137 ms per frame instead of 1.2–4 s, on the GPU around 310 instead of 140,000 dispatches per frame. Limits: a stiff seam only just converges, loose pieces come to rest poorly with 50 iterations. The basis since ADR-020 |
+| **Body as collision body** (before 4c) | body from `klon3d koerper` as a mesh in `klon3d-sim` (`netzkoerper.rs`, `Koerper::Netz`): signed distance via the nearest point and angle-weighted pseudonormals, grid search (20 mm cells, 10 mm search depth), in the implicit step a penetration check along the path with Coulomb friction on the impact. Test cases: tube on a cylinder mesh, band around the waist, point rain | **done** (finding 94): tube on the mesh, ε within 0.002 pp of the analytic case, frictionless the same equilibrium, slip test −0.11/+0.41%; band (10 mm mesh) at rest in all four cases, edges against the tape measure in their plane: Retifist ≤ 0.25%, Radical ≤ 2.7%, no point inside the skin; point rain at 6 m/s 100/100 at the impact location (without the penetration check 10/100). Open: the Radical band in the 5 mm mesh folds and does not come to rest without self-collision; body vertex against cloth triangle; moving body |
+| **4b GPU** | the implicit step from 4a′ as a WGSL compute shader via `wgpu`, `f32` (ADR-020): forces and 3×3 Jacobian blocks per edge, seam and bending, gathered per point via neighbor lists (no atomics); matrix-free A·p, block-Jacobi preconditioner with contact filter, dot products as reductions in a fixed order, warm start; contact, normal force and friction per point; collision and self-collision via spatial hashing. To be settled with 4b (finding 35, section 5): a better preconditioner for stiffer seams and loose pieces; whether edge springs are replaced by a triangle continuum | the same equilibrium as `ImplizitCg` on the tube and on the blouse in a standing pose (define and justify the tolerance), also at body height; slip test as in finding 35; Bluse3 v2 at ≥ 30 frames per second on the RTX 3090 (goal: 50 iterations, around 310 dispatches per frame); GPU tests skip themselves without an adapter and report it |
+| **4c Placement** | place the 2D pieces around the body before sewing. CLO puts them on arrangement points on hull bodies around torso, arms and legs (finding 71, addendum); klon3d needs its own simple approach, e.g. zone and side per piece (in the seam list or a separate file) and cylinders or ellipses from the body measurements of stage 2. Then the seam constraints pull the pieces together. **Built** (`platzierung.rs`, placement file `<pattern>.lage`, `klon3d anziehen`): vertical torso prism from the convex hull of the torso points, around the arm the cross-section hull per centimeter, neck cylinder from the landmarks; per piece: zone, reference point (also from another piece of the same block), circumferential position in degrees or cm, height at a reference height, `gespiegelt` (mirrored), `drehung` (rotation), `abstand` (offset) | all pieces of Bluse3 v2 lie around the body without penetration, the seams close. **Largely done** (findings 95, 96): 16 sewn pieces placed (12 glued-on ones are missing until glue zones exist); dressed with a limited sewing speed (0.1 m/s) and body vertex against cloth triangle during sewing, around the arm a length-preserving arm prism: no point inside the skin, every seam median < 0.8 mm, **98.6% of seam pairs ≤ 10 mm**, 18 of 24 seams fully closed (finding 95 without both: 92.4%). **Generality** (finding 98): Bluse1 v25 and bustier v1 as further test patterns, all three with the same settings — sewn while held (without gravity), cloth points pushed out of the skin beforehand, seam spring 2,000 N/m during dressing, thickness per piece (`dicke` in the placement file), then 2 s of settling and a 10 s hold phase under full gravity (ADR-023): **Bluse3 99.4%, Bluse1 99.1%, bustier 94.6%**, no piece sinks more than 0.4 mm. Finding 100: Bolero v37 96.5% (pleats as darts), skirt v36 95.1% (holds, but not fully at rest: flared panels overlap on the vertical prism); finding 101: seam list and placement **automatic** (`klon3d naehte --vorschlag`, `klon3d lage`); dressed entirely without hand-written files, all five hold (Bluse3 98.6%, Bluse1 98.0%, bustier 96.0%, bolero without sleeves 96.0%, skirt 95.7% — the skirt reacts chaotically to tenths of a millimeter in the initial placement); the placement suggestion lies 0.3–2.8 cm off the hand-made placements. Finding 102: the unrest came from truncated CG solves (50 iterations); with up to 600 iterations during dressing, a torso hull that widens under flared panels, and settling until at rest (2–20 s) before the hold phase: **Bluse3 98.9%, Bluse1 98.9%, bustier 93.6%, bolero 94.5%, skirt 99.2%** with hand-written files, all hold (±0.2 mm), the skirt is insensitive to the initial placement; computing time up to three times longer. Open: corners (sleeve hem, collar end, cup attachments), zones for legs and head, gaps in the pattern reader (`cutArc`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, curve names with an underscore) |
+| **4d Test blouse v26 standing** | the whole blouse on the shaped body from `klon3d koerper` | acceptance criterion below; in addition "holds" per ADR-023: after dressing ≥ 10 s of full gravity, no piece sinks more than 5 mm, nothing pinned |
+
+| Constant | Meaning |
+|---|---|
+| Distance | distance constraint, stiff for woven fabric, soft for latex |
+| Bending | very low stiffness — latex barely kinks |
+| Volume | for "body hug" (5% reduction) |
+| Body collision | cloth vertex against body triangle, Coulomb friction, penetration check within the step (finding 94); body vertex against cloth triangle as a post-correction, during dressing while sewing (finding 96) |
+| Self-collision | as in CLO 2026.1 (finding 116): proximity springs point–triangle and edge–edge up to r₁ + r₂ + 0.04 mm with r = (thickness + additional thickness 2.5 mm)/2, intersections resolved via intersection regions with a constant push, impulse with position correction to 0.1 mm; spatial hashing |
+| Air damping | per material profile |
+| Gluing | points of both layers in a glue zone rigidly coupled; the glued area bends like a plate of the total thickness |
+
+**Latex material profile:**
+
+| Quantity | Value | Source |
+|---|---|---|
+| Thickness | 0.4 mm (torso), 1.0 mm (cups, collar) | pattern files |
+| Density | 0.95 g/cm³ → 0.38 kg/m² | assumption, to be tried out |
+| Stretch | 5–10% almost linear, high elongation at break | assumption |
+| Bending stiffness | very low | assumption |
+| Friction | high on skin | assumption |
+
+The handover document explicitly marks these values as **an assumption, not
+confirmed**. They are among the first things to calibrate.
+
+**Acceptance criterion:** standing, the simulation shows the five known faults
+of test blouse v26 (see below).
+
+**Gluing (the user's request, 2026-10-19):** latex is glued, not
+sewn. klon3d should be able to do this itself, not via a detour through CLO. The
+laminate fabrics in `assets/stoffe` so far treat a glued laminate as
+a single fabric (bending ∝ t³, `MATERIAL.md`). With glue zones this becomes
+testable in klon3d itself: two glued layers of `Latex_0.4mm_Radical_Rubber` against
+one layer of `Latex_Laminat_2x0.4mm_abgeleitet` and against two loose layers —
+same shape, compared as in stage 5. Expected: glued ≈ laminate fabric,
+loose clearly softer (bending ×2 instead of ×8). Model for the user interface:
+CLO help "New in 2026.0" (Glue Fill, Glue Brush).
+
+## Stage 5 — Inspection output
+
+This is the actual purpose, not the display:
+
+| Output | Shows |
+|---|---|
+| Strain map | percent strain per face relative to the pattern |
+| Distance map | distance from latex to skin — shows a sleeve cap standing off, gaping edges |
+| Seam position | seams against body points (armpit, shoulder point, bust point) |
+| Stress map | where the material pulls |
+| Comparison map | distance between two runs: klon3d against CLO, fabric A against fabric B |
+
+Colored vertex attributes in the viewer, also exportable.
+
+### Comparing two runs (model: drape-delta-demo)
+
+The model is <https://github.com/ZHOUCHENHAO1221/drape-delta-demo> (MIT,
+as of 2026-10-18; local clone in `downloads/drape-delta-demo`). There, the same
+garment is simulated twice in CLO 2026, once with a
+library fabric and once with a measured fabric, and compared point by
+point. The method is adopted, not code or data: the
+repository contains only the website, no latex fabric and no
+raw measurements.
+
+| Point | Decision for klon3d |
+|---|---|
+| Metric | mean point distance **and median**; the mean alone is skewed by individual outliers (there 24.5 mm mean against 12.0 mm median) |
+| Display | distance per point as a color map on the garment, plus the largest single value |
+| Different meshes | klon3d and CLO have different meshes: distance to the nearest point of the other surface, in both directions; not by matching point numbers |
+| Scatter | CLO varies from run to run by about **10 mm per point** (particle distance 10). Differences below that do not count as a deviation. Compute each side three times and put each side's own scatter next to the difference |
+| Garment | a difference only holds for the garment it was measured on; report draping and fitted garments separately |
+| Interpretation | a difference says that two runs disagree, not which one is closer to reality |
+
+Important for latex: with elastic fabrics, a difference in
+**stretch** persists even on the fitted garment (jersey there: 95 mm draping,
+49 mm fitted). Differences in **bending** shrink to
+16–36% when fitted. For tight latex pieces, compare the stretch value first. First
+use case: the same piece with `Latex_0.4mm_Radical_Rubber` and with the
+Retifist preset `NR-sheet-0.40` (stretch 10× softer, see
+`MATERIAL.md`).
+
+## Stage 6 — User interface
+
+`wgpu` + `egui`. No Qt — the Rust bindings are thin, Qt 4 is end-of-life.
+Operation: load pattern, choose body, choose material, simulate. The
+solver runs on the same `wgpu` device (ADR-018); meshes can be drawn without a detour
+through the CPU.
+
+**Requirements from the user (2026-10-20):** a **dark design**, **menus** and
+**buttons**.
+
+| Part | Content |
+|---|---|
+| Design | dark by default (egui `Visuals::dark`), switchable to light, the choice is saved; colors of the inspection maps (strain, distance) readable on a dark background |
+| Menu bar | **File** (open pattern, measurement file, seam list, body, export OBJ/DXF, quit) · **Simulation** (start, pause, single step, reset, material) · **View** (2D pattern, 3D, mesh, seams, strain and distance map) · **Check** (seam lengths, mesh check) · **Help** |
+| Toolbar | buttons for the most frequent commands: open, simulate/pause, reset, 2D/3D, choose map; with keyboard shortcuts |
+| Side panels | piece list with seams and deviations (from `klon3d naehte`), properties of the selected piece (material, reduction) |
+| Status bar | frames per second, GPU, largest seam deviation, messages |
+
+Today's viewer `klon3d-fenster` (Win32 + GDI, finding 15) remains a
+diagnostic tool; the application becomes a crate of its own (`klon3d-app`, `eframe`
+with `wgpu`).
+
+## Stage 7 — Motion
+
+New since 2026-10-20 (ADR-018): the garment should also be checked in motion
+— how it pulls when the arm is raised, where it slips.
+
+| Part | Content | Status |
+|---|---|---|
+| Body with skeleton | joints and skin weights for the body from stage 2, deformation via skinning (linear or dual quaternion). Source open: CLO avatar data (`.pos`/`.iks`/`.map`, finding 53; binding via triangles as in `.acc`, finding 69) or our own rigging | open |
+| Motion data | read CLO's `.mtn` (joint sets with one 4×4 matrix per frame, finding 69); plus simple poses of our own (raise arm, take a step, twist torso) | format read (finding 69), open |
+| Contact with a moving body | body velocity in friction and collision, small substeps or continuous collision detection so that nothing slips through the arm; check the artificial damping of backward Euler (ADR-020); latex fits tightly, this is where usefulness is decided | open; for a body at rest or rigidly moved the penetration check already exists (finding 94), for deforming triangles it does not |
+| Self-collision | point–triangle and edge–edge handled separately (like CLO, finding 43), spatial hashing on the GPU | built on the CPU (finding 116: `selbstkollision.rs`, `anziehen --selbstkollision`, off by default); without layers/sub-layers; GPU open |
+| Output | frame sequence (OBJ per frame, later glTF), strain and distance map per frame (stage 5) | open |
+
+**Acceptance criterion (proposal, to be agreed with the user):** raise the arm of
+test blouse v26 to 90° within one second: no penetration over 1 mm,
+the seams hold, the pull at sleeve cap and armpit shows up the way the user
+describes it on the real test garment; computation in real time or faster.
+
+---
+
+## Test case: test blouse v26
+
+The simulation is only useful once it shows these five faults:
+
+1. Plunge edges slide to the side, the bust falls out
+2. Sleeve cap stands off ~3 cm at the top
+3. Tension at the shoulder blade
+4. Sleeve too tight along its whole length (reduction 4.4% / 2.2%)
+5. Collar stands open at the front
+
+Known beforehand: armhole 41.53 cm against body 41 — does not fit; according to
+the *Catsuit* book (pp. 310/312), ~38.7 cm would be right.
+
+**If the simulation cannot do this, it is useless as a check.** That is
+how the handover document states it, and it still holds.
+
+---
+
+## Fabric alongside latex (ADR-021)
+
+The user's request of 2026-10-27: klon3d should also work for real fabric,
+with fabric patterns from Seamly2D. What that requires beyond latex,
+per stage:
+
+| Stage | needed for fabric | Status |
+|---|---|---|
+| 1 Pattern reading | grainline per piece: read Seamly2D `<grainline>` (position, rotation), otherwise a fixed piece axis | open; the reader skips `<grainline>` |
+| 3 Mesh | carry the grainline into the mesh (direction per triangle); sewn seam with the seam allowance turned inward instead of an overlap seam; glue zone = fusible interfacing | open |
+| 4 Solver | **anisotropic material**: warp, weft and shear separate; for this a **triangle continuum** instead of edge springs (those have ν = 1/3 and no independent shear); noticeable, direction-dependent bending; **self-collision** and layers, because fabric falls into folds | open; edge springs isotropic; self-collision since finding 116 (switch, CPU), layers missing |
+| Material | `.zfab` reader in Rust, values from CLO's fabric library (ADR-015), no measurements of our own | open; only the Python reader |
+| 5 Inspection output | drape and folds; comparison against CLO with the same fabric, draping and fitted reported separately (already specified) | open |
+
+**Acceptance case for fabric:** a fabric pattern from Seamly2D chosen by the user,
+with a CLO fabric from the library, compared standing against CLO
+as described in stage 5. The criterion is to be agreed with her.
+
+---
+
+## Reading CLO projects (ADR-022)
+
+The user's request of 2026-10-27: CLO projects should be compatible.
+Test material: 47 `.zprj` in `downloads/clo3d-patterns` (third-party files, used only
+as data), plus our own test projects from CLO 2026.1 in which the same pattern
+also exists as `.sm2d`. Format knowledge comes from the findings, `spez/`
+and `work/` (ADR-024).
+
+| Step | Content | Status |
+|---|---|---|
+| Container | header and ZIP block (findings 10, 50, 51), property tree (finding 57) read in Rust | **done** — `zip.rs` (own reader, preamble of 436,425 B in `.zprj`) and `property.rs`; 2034/2034 arrays with `u32 n + u8 type` (finding 117) |
+| Pieces | `mapShape2D` of the blocks (finding 62) → seam line, internal lines, grainline, unit; from this the mesh, as for `.sm2d` | **read** — 31 pieces, 194 boundary lines, 107 internal shapes with 131 lines; unit mm confirmed; the mesh is still built by klon3d itself |
+| Seams | `listSeamLinePairGroup` → seam list (edge, direction, sections) instead of `.naehte` | **done** — 143 pairs / 286 sides, `uiDepth` 1 = boundary (240), 2 = internal line (46), `arrMeshPointIndex` local; 0 broken sides |
+| Placement | `mapArrange` and `.pos` → placement data instead of `.lage`, on klon3d's hull bodies (new zones for legs) | **`mapArrange` read** (finding 118): `qsPanName`/`fNormalizedHeight`/`fNormalizedArcLength`/`fAngle` per piece, but a zone only for 9 of 31 pieces; `.pos` carries **only the avatar pose**, not the piece placement. Mapping onto the hull bodies open |
+| 3D mesh | read `baPosition3D` (CLO's simulated mesh) and `baRest` (rest shape), output as OBJ — comparison reference for stage 5 | **done** — 12 B/vertex (3 × f32, mm), 88,718 vertices / 169,181 triangles, 0 deviation from the 2D data; `--obj` writes 31 objects, 47/47 third-party projects; seams meet only with `bDraped=1` + `bActive` (mean 0.171 mm) (finding 118) |
+| Comparison baseline | How much does CLO itself scatter? The same pattern with a different fabric as a calibration value | **done** - `backup` state bit-identical to the download, identical topology. Two measures: displacement by index **median 6.10 mm**, 90% 20.55, 99% 41.46, max 68.92; distance to the **surface** (the measure for klon3d) **median 2.14 mm**, 90% 9.49, max 58.05. The difference is sliding along the surface. `klon3d vergleich <a.obj> <b.obj>` computes it in Rust (finding 118, section 11) |
+| Fabric | fabric per piece from the project, values as in `.zfab` (ADR-015, ADR-021) | **done** — `mapFabricShape2D.iFabricIndex` per piece, `mapPhysical` with thickness/density/profile; 6/18/2/5 = 31 |
+| Avatar | avatar or measurements of the project, otherwise the user's `.smis` | **body done** (finding 119): `body` from the `.avt` (ZIP inside the CLO header, containing a `.dan` without header, `listSkinController`), **31,422 vertices / 62,658 triangles**, mm in avatar space (y = height, the same space as the garment); `--koerper-obj` writes it, **40 of 47** third-party projects have an `.avt`. **Segment and landmark mapping done** (finding 120): `anordnung_clo.rs` applies CLO's `range_list.rlist` + `IndexSet.txt` — confirmed via edges 98.56%, neighborhoods 92.2%, displacement 0.70 mm against 629.86 mm for a random permutation; the 2020 L52 is wrong (8.91 mm), the check rejects it. Measurements from the `.avt` (resizing) still open |
+
+Acceptance of the reader: `klon3d zprj <project.zprj> [--teile] [--naehte] [--stoffe] [--netz] [--obj <file>]`
+against `work/messung/japanese_school_uniform` (0 broken seam sides, exit code 0) and
+against the **47 third-party `.zprj`** in `downloads/clo3d-patterns`: 47/47 read,
+2,109 pieces, 4,256 seam pairs, 0 errors (finding 117, sections 7 and 8).
+
+Acceptance of the 3D mesh (finding 118): 88,718 vertices / 169,181 triangles, 0 deviation from the 2D data;
+`--obj` writes 31 objects with 0 degenerate triangles, 47/47 third-party projects with a mesh (0 errors).
+Reference for the comparison: `work/messung/japanese_school_uniform/clo3d_netz.obj`.
+Touchstone for every seam measurement: only `bDraped=1` (group) **and** `bActive` (pair) is the sewn
+state — mean 0.171 mm against 21.2 / 44.2 mm otherwise.
+
+Acceptance of the body (finding 119): `klon3d zprj <project.zprj> --koerper-obj <file.obj>` writes `body`
+with 31,422 vertices / 62,658 triangles (0 triangle indices out of range), 40/47 third-party projects with a body, 7 without
+an `.avt` (not a read error). Cross-check against an independent Python parser: largest deviation 0.00005 mm
+(OBJ rounding only).
+
+**The body is usable without re-posing** (finding 119, 4.1/4.2): it stands in an A-pose with the arms **22° from the
+vertical** (not horizontal) — and that **is** the pose CLO computed in, because the sleeve sits on
+the arm (98–99% of the nearest body points lie on the arm themselves). Nothing is inside the body (0/1,117 left sleeve,
+0/1,198 right, 0/65,339 skirt, 0/16,082 torso). Garment→skin per group: sleeves 14.0/14.5, back torso 7.7, front 24.7, skirt
+24.5 mm; nowhere below 4.4 mm. The `.pos` is only needed for a **different** pose (fitting).
+
+**Stage 5 cannot be computed yet** (finding 118, section 11): `anziehen` reads `.sm2d` + `.naehte` +
+`.smis` + `.lage`, for the test project there is only the `.zprj`; in addition the axes need rotating (CLO y = height, klon3d
+z = height). The **body** is no longer a blocker (finding 119), and **neither is its segment and landmark mapping** (finding 120):
+`klon3d anziehen <pattern.sm2d> --zprj <project.zprj>` takes `body` from the `.avt`, plus segments from
+`range_list.rlist` and landmarks from `IndexSet.txt`. CLO's numbering applies unchanged — confirmed via edges
+(98.56%), neighborhoods (92.2%) and the smoothness of the displacement (0.70 mm against 629.86 mm for a random permutation).
+First run with bustier v1: 298 of 299 seam pairs within 10 mm. **The comparison baseline, however, already exists:**
+the `backup` state is
+bit-identical to the download (same topology, `baRest`/`baTri` identical in 31/31 pieces). CLO's own
+result shifts from the fabric change alone
+
+- **by index** (same vertex, only possible with identical topology) by **median 6.10 mm**
+  (90% 20.55 / 99% 41.46 / max 68.92),
+- in **distance to the surface** - the measure that applies to klon3d against CLO - by **median 2.14 mm**
+  (90% 9.49 / max 58.05).
+
+The difference is tangential sliding; below **2 mm surface distance** a difference cannot be told apart from
+CLO's own variation. Tool: `klon3d vergleich <a.obj> <b.obj> [--zelle mm] [--csv file]`.
+
+Writing back as `.zprj` has not been decided; the route to CLO remains
+`klon3d dxf`.
+
+---
+
+## Order and dependencies
+
+```
+Stage 1  Patterns ──┬─→ Stage 3  Mesh ──┐
+                    │                   ├─→ Stage 4  Solver ─→ Stage 5  Inspection output
+Stage 2  Body ──────┴───────────────────┘   4a Tube (CPU)
+                                            4b GPU
+                                            4c Placement
+                                            4d Blouse standing ─→ Stage 7  Motion
+```
+
+Stages 1 and 2 are independent and can be done in parallel. Stage 4 depends on both.
+Stage 7 needs 4b (GPU) and 4d as well as a body with a skeleton.
+
+---
+
+## Honest assessment
+
+This is a **multi-month project**, not a one-week project. Realistically:
+
+| Stage | Size |
+|---|---|
+| 1 Pattern reading | the most laborious single stage, but a finite set |
+| 2 Body | small, a template exists |
+| 3 Mesh | medium, standard methods |
+| 4 Solver | second most laborious, the core; with the GPU version and placement larger than originally thought |
+| 5 Output | small |
+| 6 User interface | medium |
+| 7 Motion | large: skeleton and skin weights, contact with a moving body, self-collision |
+
+The work proceeds stage by stage and shows confirmed results after each stage, instead of
+delivering something untested at the end. The solver is first checked against the
+simple "tube" case, which the existing stage 2 has already solved
+— this shows whether the physics holds before a sleeve depends on it.
+
+Still open is the calibration of the latex material: the numbers in the
+handover are marked as an assumption, and there are no calibrated values for
+latex with reduction on the skin. That is the biggest uncertainty in the
+entire simulation.

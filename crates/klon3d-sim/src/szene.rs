@@ -1,0 +1,390 @@
+//! Die Szene: Punkte, Constraints und Körper als Felder (Struct of Arrays).
+//!
+//! So liegen die Daten auch in den Puffern der GPU-Fassung (ADR-018,
+//! Schritt 4b): je Größe ein Feld, Constraints nach Farbe geordnet
+//! ([`crate::faerbung`]).
+//!
+//! ## Vom Schnittnetz zu den Constraints
+//!
+//! * **Masse:** Fläche des Zuschnitts × Flächengewicht, je Dreieck zu
+//!   gleichen Teilen auf seine drei Punkte. Der Zuschnitt ist das um die
+//!   Reduktion verkleinerte Teil, also 2D-Fläche × (1 − r)²: Latex wird
+//!   kleiner zugeschnitten, das Flächengewicht gilt je ungedehnter Folie.
+//!   (Steckt die Reduktion schon im Muster, wie bei der Bluse3, ist r = 0.)
+//! * **Dehnung:** eine Abstandsfeder je Netzkante, Ruhelänge = 2D-Länge ×
+//!   (1 − Reduktion). Ein Dreiecksnetz aus Federn ist eine Membran mit
+//!   ν = 1/3; im regelmäßigen Netz gilt E_2D = 2k/√3. Für beliebige Netze
+//!   verteilt die Steifigkeit über die Fläche:
+//!   `k = K · (Summe der anliegenden Dreiecksflächen) / L²` — im
+//!   gleichseitigen Netz genau `k = √3/2 · K`. Nachgiebigkeit α = 1/k.
+//! * **Biegung:** ein Winkel-Constraint je innerer Kante (vorzeichenbehafteter
+//!   Diederwinkel, Ruhewinkel 0 — der Schnitt ist eben). Steifigkeit aus der
+//!   Plattensteifigkeit D: `k = D · L² / (A₁ + A₂)`. Für ein gleichseitiges
+//!   Netz auf einem Zylinder ist der Diederwinkel θ = L·(3κ⊥ − κ∥)/(2√3),
+//!   über die drei Kantenrichtungen gemittelt θ² = κ²L²/4; mit diesem k gibt
+//!   das genau die Biegeenergie D/2·κ² je Fläche (Test
+//!   `biegeenergie_auf_dem_zylinder`). Auf einer Kugel wäre es ¾ davon.
+//! * **Nähte:** ein Abstand-Constraint je Punktpaar aus `klon3d-mesh`
+//!   (Befund 33), Ruhelänge 0 (bündig), Nachgiebigkeit wählbar (Vorgabe 0).
+//!   Dazu ein Biege-Constraint über jede genähte Randkante (Randdreieck auf
+//!   beiden Seiten), damit die Naht kein Gelenk ist; Ruhewinkel 0 = beide Teile
+//!   liegen flach aneinander (CLO: Sewing Line Type 180°). Liegen die Teile
+//!   gespiegelt zueinander, fehlt ein flacher Ruhewinkel — dann bleibt die
+//!   Kante ohne Biegung (`naht_biegung_ohne`).
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
+use klon3d_mesh::Musternetz;
+
+use crate::faerbung::{faerbe, ordnung};
+use crate::koerper::Koerper;
+use crate::material::Material;
+
+/// Faktor der Weichheitsbedingung ([`Szene::unterschritte_weich`]): 90 % der
+/// Federkraft je Unterschritt.
+pub const WEICH_FAKTOR: f64 = 9.0;
+
+/// Was ein Teil an Stoff und Reduktion bekommt.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Teilvorgabe {
+    pub material: Material,
+    /// Reduktion als Anteil (0,055 = 5,5 %). Isotrop; CLO führt sie je Punkt
+    /// als float2 Kette/Schuss (Befund 59).
+    pub reduktion: f64,
+}
+
+/// Zeitschritt, Kräfte, Dämpfung.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Simparameter {
+    /// Länge eines Bildes (s).
+    pub bild_dt: f64,
+    /// Unterschritte je Bild (XPBD „Small Steps“: je Unterschritt eine
+    /// Iteration).
+    pub unterschritte: usize,
+    /// Schwerkraft (m/s²).
+    pub schwerkraft: [f64; 3],
+    /// Geschwindigkeitsdämpfung (1/s): v ← v · (1 − d·h).
+    pub daempfung: f64,
+    /// Nachgiebigkeit der Naht-Constraints (m/N); 0 = starr.
+    pub naht_nachgiebigkeit: f64,
+}
+
+impl Default for Simparameter {
+    fn default() -> Self {
+        Simparameter {
+            bild_dt: 1.0 / 60.0,
+            unterschritte: 20,
+            schwerkraft: [0.0, 0.0, -9.81],
+            daempfung: 0.0,
+            naht_nachgiebigkeit: 0.0,
+        }
+    }
+}
+
+/// Constraints einer Art mit `N` Punkten, nach Farbe geordnet.
+#[derive(Debug, Clone, Default)]
+pub struct Gruppe<const N: usize> {
+    pub punkte: Vec<[u32; N]>,
+    /// Ruhewert: Länge (m) bzw. Winkel (rad).
+    pub ruhe: Vec<f64>,
+    /// Nachgiebigkeit α (Kehrwert der Steifigkeit).
+    pub nachgiebigkeit: Vec<f64>,
+    /// Bereiche je Farbe in den Feldern oben.
+    pub farben: Vec<Range<usize>>,
+}
+
+impl<const N: usize> Gruppe<N> {
+    fn geordnet(punkte: Vec<[u32; N]>, ruhe: Vec<f64>, alpha: Vec<f64>, npunkte: usize) -> Self {
+        let (farbe, zahl) = faerbe(punkte.len(), npunkte, |c| &punkte[c][..]);
+        let (idx, farben) = ordnung(&farbe, zahl);
+        Gruppe {
+            punkte: idx.iter().map(|&c| punkte[c]).collect(),
+            ruhe: idx.iter().map(|&c| ruhe[c]).collect(),
+            nachgiebigkeit: idx.iter().map(|&c| alpha[c]).collect(),
+            farben,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.punkte.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.punkte.is_empty()
+    }
+}
+
+/// Ein Schnittteil in der Szene.
+#[derive(Debug, Clone)]
+pub struct Teilinfo {
+    pub name: String,
+    pub punkte: Range<usize>,
+    pub dreiecke: Range<usize>,
+    pub vorgabe: Teilvorgabe,
+}
+
+/// Die ganze Szene.
+#[derive(Debug, Clone)]
+pub struct Szene {
+    /// Positionen (m).
+    pub x: Vec<[f64; 3]>,
+    /// Geschwindigkeiten (m/s).
+    pub v: Vec<[f64; 3]>,
+    /// Masse (kg) und inverse Masse; 0 = festgehalten.
+    pub masse: Vec<f64>,
+    pub w: Vec<f64>,
+    /// Kollisionsabstand (halbe Dicke, m) und Reibungszahl je Punkt.
+    pub kollisionsabstand: Vec<f64>,
+    pub reibung: Vec<f64>,
+    pub abstand: Gruppe<2>,
+    pub naht: Gruppe<2>,
+    pub biegung: Gruppe<4>,
+    /// Dreiecke (globale Punktindizes).
+    pub dreiecke: Vec<[u32; 3]>,
+    /// Je Dreieck die Inverse der 2×2-Ruhematrix [p1−p0, p2−p0] (reduziert,
+    /// m), zeilenweise, für die Dehnung.
+    pub ruhe_inv: Vec<[f64; 4]>,
+    pub teile: Vec<Teilinfo>,
+    /// Genähte Randkanten ohne Biege-Constraint (Teile gespiegelt).
+    pub naht_biegung_ohne: usize,
+    pub koerper: Vec<Koerper>,
+    pub param: Simparameter,
+    /// Simulierte Zeit (s).
+    pub zeit: f64,
+}
+
+/// Abstand zweier 2D-Punkte.
+fn l2(a: [f64; 2], b: [f64; 2]) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
+}
+
+/// Fläche eines 2D-Dreiecks (positiv bei positivem Umlauf).
+fn flaeche(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    0.5 * ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]))
+}
+
+impl Szene {
+    /// Baut die Szene aus einem Schnittnetz. `vorgabe(teilname)` liefert Stoff
+    /// und Reduktion, `lage(teilindex, punkt_mm)` die Anfangslage in m.
+    pub fn aus_netz(
+        netz: &Musternetz,
+        vorgabe: &dyn Fn(&str) -> Teilvorgabe,
+        lage: &dyn Fn(usize, [f64; 2]) -> [f64; 3],
+        koerper: Vec<Koerper>,
+        param: Simparameter,
+    ) -> Szene {
+        let mut x = Vec::new();
+        let mut masse = Vec::new();
+        let mut kollisionsabstand = Vec::new();
+        let mut reibung = Vec::new();
+        let mut dreiecke = Vec::new();
+        let mut ruhe_inv = Vec::new();
+        let mut teile = Vec::new();
+        let (mut a_p, mut a_r, mut a_a) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut b_p, mut b_r, mut b_a) = (Vec::new(), Vec::new(), Vec::new());
+        let mut versatz = Vec::new();
+        // Je Teil: Randkante (lokal, sortiert) → (Gegenpunkt, Dreiecksfläche);
+        // 2D-Punkte in m; Plattensteifigkeit.
+        let mut randkanten: Vec<BTreeMap<(u32, u32), (u32, f64)>> = Vec::new();
+        let mut punkte_m: Vec<Vec<[f64; 2]>> = Vec::new();
+        let mut biegesteif: Vec<f64> = Vec::new();
+
+        for (ti, t) in netz.teile.iter().enumerate() {
+            let vg = vorgabe(&t.teil);
+            let skala = 1.0 - vg.reduktion;
+            let off = x.len();
+            versatz.push(off as u32);
+            let p_m: Vec<[f64; 2]> = t.punkte.iter().map(|p| [p[0] * 1e-3, p[1] * 1e-3]).collect();
+            for (k, p) in t.punkte.iter().enumerate() {
+                let _ = k;
+                x.push(lage(ti, *p));
+                masse.push(0.0);
+                kollisionsabstand.push(vg.material.dicke_m / 2.0);
+                reibung.push(vg.material.reibung);
+            }
+            // Kanten mit anliegender Fläche, innere Kanten mit Gegenpunkten.
+            let mut kanten: BTreeMap<(u32, u32), (f64, Vec<u32>)> = BTreeMap::new();
+            let d0 = dreiecke.len();
+            for d in &t.dreiecke {
+                let (pa, pb, pc) = (p_m[d[0] as usize], p_m[d[1] as usize], p_m[d[2] as usize]);
+                let a = flaeche(pa, pb, pc).abs();
+                for &i in d {
+                    masse[off + i as usize] += a * skala * skala * vg.material.flaechengewicht_kg_m2 / 3.0;
+                }
+                for k in 0..3 {
+                    let (i, j, o) = (d[k], d[(k + 1) % 3], d[(k + 2) % 3]);
+                    let e = kanten.entry((i.min(j), i.max(j))).or_insert((0.0, Vec::new()));
+                    e.0 += a;
+                    e.1.push(o);
+                }
+                // Ruhematrix (reduziert) und ihre Inverse.
+                let s = |q: [f64; 2]| [q[0] * skala, q[1] * skala];
+                let (qa, qb, qc) = (s(pa), s(pb), s(pc));
+                let (m00, m10, m01, m11) = (qb[0] - qa[0], qb[1] - qa[1], qc[0] - qa[0], qc[1] - qa[1]);
+                let det = m00 * m11 - m01 * m10;
+                ruhe_inv.push([m11 / det, -m01 / det, -m10 / det, m00 / det]);
+                dreiecke.push([d[0] + off as u32, d[1] + off as u32, d[2] + off as u32]);
+            }
+            for (&(i, j), (asum, gegen)) in &kanten {
+                let l = l2(p_m[i as usize], p_m[j as usize]);
+                if l <= 0.0 {
+                    continue;
+                }
+                let k = vg.material.dehnung_n_m * asum / (l * l);
+                a_p.push([i + off as u32, j + off as u32]);
+                a_r.push(l * skala);
+                a_a.push(1.0 / k);
+                if let [o1, o2] = gegen[..] {
+                    // Orientierung: Dreieck 1 = (i, j, o) mit positivem Umlauf.
+                    let (pi, pj) = (p_m[i as usize], p_m[j as usize]);
+                    let (o_a, o_b) = if flaeche(pi, pj, p_m[o1 as usize]) > 0.0 { (o1, o2) } else { (o2, o1) };
+                    let a12 = flaeche(pi, pj, p_m[o_a as usize]).abs() + flaeche(pj, pi, p_m[o_b as usize]).abs();
+                    let kb = vg.material.biegung_nm * l * l / a12;
+                    b_p.push([i + off as u32, j + off as u32, o_a + off as u32, o_b + off as u32]);
+                    b_r.push(0.0);
+                    b_a.push(1.0 / kb);
+                }
+            }
+            let rand: BTreeMap<(u32, u32), (u32, f64)> = kanten
+                .iter()
+                .filter_map(|(&k, (asum, gegen))| match gegen[..] {
+                    [o] => Some((k, (o, *asum))),
+                    _ => None,
+                })
+                .collect();
+            randkanten.push(rand);
+            punkte_m.push(p_m);
+            biegesteif.push(vg.material.biegung_nm);
+            teile.push(Teilinfo {
+                name: t.teil.clone(),
+                punkte: off..x.len(),
+                dreiecke: d0..dreiecke.len(),
+                vorgabe: vg,
+            });
+        }
+
+        // Biegung über die Nähte: aufeinanderfolgende Punktpaare (aₖ, bₖ),
+        // (aₖ₊₁, bₖ₊₁), deren a- und b-Strecke je eine Randkante ist.
+        let mut naht_biegung_ohne = 0usize;
+        let mut naht_kanten = BTreeSet::new();
+        for n in &netz.naehte {
+            for tn in &n.teilnaehte {
+                let (ta, tb) = (tn.teil_a, tn.teil_b);
+                for w in tn.paare.windows(2) {
+                    let (a0, a1, b0, b1) = (w[0].a, w[1].a, w[0].b, w[1].b);
+                    let (Some(&(oa, fa)), Some(&(ob, fb))) =
+                        (randkanten[ta].get(&(a0.min(a1), a0.max(a1))), randkanten[tb].get(&(b0.min(b1), b0.max(b1))))
+                    else {
+                        continue;
+                    };
+                    if !naht_kanten.insert((versatz[ta] + a0.min(a1), versatz[ta] + a0.max(a1))) {
+                        continue;
+                    }
+                    let (pa, pb) = (&punkte_m[ta], &punkte_m[tb]);
+                    // Dreieck 1 = (x0, x1, oa) positiv in Teil A; Dreieck 2 =
+                    // (x1, x0, ob) muss dann in Teil B positiv sein (die
+                    // b-Punkte zu x1, x0) — sonst liegen die Teile gespiegelt.
+                    let ((x0a, x1a), (x0b, x1b)) = if flaeche(pa[a0 as usize], pa[a1 as usize], pa[oa as usize]) > 0.0 {
+                        ((a0, a1), (b0, b1))
+                    } else {
+                        ((a1, a0), (b1, b0))
+                    };
+                    if flaeche(pb[x1b as usize], pb[x0b as usize], pb[ob as usize]) <= 0.0 {
+                        naht_biegung_ohne += 1;
+                        continue;
+                    }
+                    let l = l2(pa[a0 as usize], pa[a1 as usize]);
+                    let kb = 0.5 * (biegesteif[ta] + biegesteif[tb]) * l * l / (fa + fb);
+                    b_p.push([x0a + versatz[ta], x1a + versatz[ta], oa + versatz[ta], ob + versatz[tb]]);
+                    b_r.push(0.0);
+                    b_a.push(1.0 / kb);
+                }
+            }
+        }
+
+        // Nähte: Punktpaare, doppelte und Selbstpaare weg.
+        let mut paare = BTreeSet::new();
+        for n in &netz.naehte {
+            for (tn, pp) in n.paare() {
+                let a = versatz[tn.teil_a] + pp.a;
+                let b = versatz[tn.teil_b] + pp.b;
+                if a != b {
+                    paare.insert((a.min(b), a.max(b)));
+                }
+            }
+        }
+        let n_p: Vec<[u32; 2]> = paare.iter().map(|&(a, b)| [a, b]).collect();
+        let n_r = vec![0.0; n_p.len()];
+        let n_a = vec![param.naht_nachgiebigkeit; n_p.len()];
+
+        let np = x.len();
+        let w = masse.iter().map(|&m| if m > 0.0 { 1.0 / m } else { 0.0 }).collect();
+        Szene {
+            v: vec![[0.0; 3]; np],
+            w,
+            masse,
+            kollisionsabstand,
+            reibung,
+            abstand: Gruppe::geordnet(a_p, a_r, a_a, np),
+            naht: Gruppe::geordnet(n_p, n_r, n_a, np),
+            biegung: Gruppe::geordnet(b_p, b_r, b_a, np),
+            dreiecke,
+            ruhe_inv,
+            teile,
+            naht_biegung_ohne,
+            koerper,
+            param,
+            zeit: 0.0,
+            x,
+        }
+    }
+
+    /// Nähen mit begrenzter Geschwindigkeit: Jede Nahtfeder bekommt als
+    /// Ruhelänge ihren Abstand, höchstens die bisherige Ruhelänge (beim ersten
+    /// Aufruf nach [`Self::naht_offen`] der Abstand selbst), um `schritt`
+    /// gekürzt, nicht unter 0. Je Bild aufgerufen, schließt sich eine Naht mit
+    /// `schritt`/Bild statt in einem Bild: Ein Stoffpunkt wiegt rund 10 mg, und
+    /// der implizite Schritt springt bei jeder Federstärke bis ins
+    /// Gleichgewicht (Befund 96: bis 14 m/s im ersten Bild).
+    pub fn naht_kuerzen(&mut self, schritt: f64) {
+        for c in 0..self.naht.len() {
+            let [i, j] = self.naht.punkte[c].map(|p| p as usize);
+            let l = crate::koerper::norm(crate::koerper::sub(self.x[i], self.x[j]));
+            self.naht.ruhe[c] = (self.naht.ruhe[c].min(l) - schritt).max(0.0);
+        }
+    }
+
+    /// Setzt die Ruhelänge aller Nahtfedern auf unendlich: der nächste
+    /// [`Self::naht_kuerzen`] beginnt beim Abstand.
+    pub fn naht_offen(&mut self) {
+        for r in self.naht.ruhe.iter_mut() {
+            *r = f64::INFINITY;
+        }
+    }
+
+    /// Gesamtmasse (kg).
+    pub fn gesamtmasse(&self) -> f64 {
+        self.masse.iter().sum()
+    }
+
+    /// Unterschritte je Bild, damit jede Dehnungskante im **weichen Bereich**
+    /// von XPBD liegt: α/h² ≥ `faktor` · (wᵢ + wⱼ). Dann überträgt eine
+    /// Iteration je Unterschritt den Anteil α̃/(Σw + α̃) ≥ faktor/(faktor + 1)
+    /// der Federkraft — bei Faktor 9 also 90 %. Im steifen Bereich stimmt nur
+    /// die Lage, nicht die Kraft (Befund 34).
+    pub fn unterschritte_weich(&self, faktor: f64) -> usize {
+        let mut h_max = f64::INFINITY;
+        for c in 0..self.abstand.len() {
+            let [i, j] = self.abstand.punkte[c].map(|p| p as usize);
+            let wsum = self.w[i] + self.w[j];
+            if wsum > 0.0 {
+                h_max = h_max.min((self.abstand.nachgiebigkeit[c] / (faktor * wsum)).sqrt());
+            }
+        }
+        if !h_max.is_finite() {
+            return self.param.unterschritte;
+        }
+        (self.param.bild_dt / h_max).ceil().max(1.0) as usize
+    }
+}

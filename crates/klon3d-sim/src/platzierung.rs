@@ -1,0 +1,1140 @@
+//! Platzierung (Schritt 4c): Schnittteile vor dem Nähen um den Körper legen.
+//!
+//! CLO legt Teile auf Anordnungspunkte an Hüllkörpern um Rumpf, Arme und
+//! Beine (Befund 71, Nachtrag); klon3d hat einen eigenen, einfachen Weg:
+//!
+//! * **Hüllkörper** aus dem Körper ([`Koerperteile`]): ein senkrechtes Prisma
+//!   um den Rumpf (konvexe Hülle der Rumpfpunkte über die Höhe der Teile), je
+//!   ein Zylinder um die Oberarme (Achse aus den Armpunkten zwischen Schulter
+//!   und Ellbogen) und ein senkrechter Zylinder um den Hals (Halslandmarken),
+//!   alle um einen Abstand nach außen versetzt (Lagedatei, je Teil
+//!   änderbar). Um den Arm liegt wie um den Rumpf ein Prisma, hier längs der
+//!   Armachse: die konvexe Hülle der Armpunkte über die Länge des Teils. Ein
+//!   Ärmel, der nur halb um den Arm reicht, schließt seine Naht nicht — die
+//!   Nahtfedern ziehen die Kanten quer durch den Arm, und der hält sie fest
+//!   (an der Bluse3 v2 blieb die Ärmelnaht 86 mm offen, so breit wie der Arm,
+//!   mit einem Zylinder vom Radius der Schulterkappe; ein Kreis vom größten
+//!   Abstand zur Achse überschätzt den Umfang des Oberarms um ein Viertel).
+//!   Eine Hülle je Zentimeter schmiegt sich enger an, ist aber nicht
+//!   abwickelbar: Der Ärmel begann dort mit bis zu 20 % Dehnung (Befund 96).
+//! * **Lageangaben** je Teil ([`lies_lage`], Datei `<muster>.lage` neben dem
+//!   Muster wie die Nahtliste): Zone, Bezugspunkt, Umfangslage, Höhe und ob das
+//!   Teil gespiegelt oder gedreht wird. Der Bezugspunkt darf ein Punktknoten
+//!   eines anderen Teils sein: Teile aus demselben Konstruktionsblock mit
+//!   demselben Bezugspunkt liegen zueinander wie im Muster, gemeinsame
+//!   Nahtpunkte also schon aufeinander.
+//! * **Abwicklung:** Jedes Teil wird längentreu auf seinen Hüllkörper gelegt —
+//!   Prisma und Zylinder sind abwickelbar. Musterrichtung y (nach unten) wird
+//!   die Höhe bzw. die Armachse, Musterrichtung x der Umfang.
+//! * **Weite:** Sind die Rumpfteile in einer Höhe zusammen breiter als das
+//!   Prisma (ausgestellte Rockbahnen), weitet sich die Hülle dort um die Mitte
+//!   des Rumpfs, längentreu in der Breite, je 2 cm geglättet und nach unten
+//!   nie abnehmend ([`Platzierung::weite_bei`]). Auf dem senkrechten Prisma
+//!   überlappten die Bahnen des Rocks v36, und die Saumecken rutschten
+//!   zwischen die Beine (Befund 100); geweitet sind seine Seitennähte bis zum
+//!   Saum zu (Befund 102). Oberteile, die enger sind als der Körper, bleiben
+//!   auf dem Prisma.
+//!
+//! **Welche Seite außen liegt.** Ein Teil liegt, wie gezeichnet, „von außen
+//! gesehen“: Muster-x zeigt nach rechts für den, der von außen auf die Stelle
+//! schaut, Muster-y nach unten. Am Rumpf ist das gegen den Uhrzeigersinn von
+//! oben gesehen (vorn nach links, hinten nach rechts). Ist ein Teil anders
+//! gezeichnet — bei der Bluse3 v2 die Rückenteile und die Ärmel —, steht in
+//! der Lageangabe `gespiegelt`.
+//!
+//! **Winkel.** Umfang am Rumpf und am Hals in Grad, von oben gesehen: 0 =
+//! vorn, 90 = links, 180 = hinten, 270 = rechts (Körperseiten der Trägerin).
+//! Am Arm: 0 = oben, 90 = vorn, 180 = unten, 270 = hinten. Dazu ein Versatz
+//! in cm Bogenlänge auf dem Hüllkörper, in Richtung wachsender Winkel.
+//!
+//! Szenenrahmen wie [`crate::netzkoerper`]: m, z oben, vorn −y, links +x.
+
+use klon3d_mesh::{Musternetz, Nahtnetz};
+
+use crate::cpu::Rechenweg;
+use crate::implizit::ImplizitCg;
+use crate::koerper::{add, cross, dot, mul, norm, sub, Koerper};
+use crate::szene::Szene;
+
+/// Vorgabe des Abstands der Hüllkörper zur Haut (m).
+pub const ABSTAND: f64 = 0.02;
+
+// ---------------------------------------------------------------------------
+// Ebene Geometrie
+// ---------------------------------------------------------------------------
+
+/// Konvexe Hülle gegen den Uhrzeigersinn (Andrew, monotone Kette).
+pub fn huelle(mut p: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    p.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    p.dedup();
+    if p.len() < 3 {
+        return p;
+    }
+    let kreuz = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    let mut h: Vec<[f64; 2]> = Vec::new();
+    for durchgang in 0..2 {
+        let start = h.len();
+        let folge: Box<dyn Iterator<Item = &[f64; 2]>> = if durchgang == 0 { Box::new(p.iter()) } else { Box::new(p.iter().rev()) };
+        for &q in folge {
+            while h.len() >= start + 2 && kreuz(h[h.len() - 2], h[h.len() - 1], q) <= 0.0 {
+                h.pop();
+            }
+            h.push(q);
+        }
+        h.pop();
+    }
+    h
+}
+
+/// Umfang eines geschlossenen Polygons.
+pub fn umfang(h: &[[f64; 2]]) -> f64 {
+    (0..h.len())
+        .map(|i| {
+            let (a, b) = (h[i], h[(i + 1) % h.len()]);
+            ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt()
+        })
+        .sum()
+}
+
+/// Konvexes Polygon (gegen den Uhrzeigersinn) um `abstand` nach außen
+/// versetzt: jede Kante parallel, die Ecken auf Gehrung.
+pub fn versetzt(h: &[[f64; 2]], abstand: f64) -> Vec<[f64; 2]> {
+    let n = h.len();
+    let normale = |a: [f64; 2], b: [f64; 2]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let l = (dx * dx + dy * dy).sqrt();
+        [dy / l, -dx / l]
+    };
+    (0..n)
+        .map(|i| {
+            let (v, p, w) = (h[(i + n - 1) % n], h[i], h[(i + 1) % n]);
+            let (n1, n2) = (normale(v, p), normale(p, w));
+            let k = abstand / (1.0 + n1[0] * n2[0] + n1[1] * n2[1]).max(0.1);
+            [p[0] + k * (n1[0] + n2[0]), p[1] + k * (n1[1] + n2[1])]
+        })
+        .collect()
+}
+
+/// Punkt bei der Bogenlänge `s` (beliebig, umlaufend) auf dem geschlossenen
+/// Polygon, ab der ersten Ecke.
+pub fn auf_polygon(h: &[[f64; 2]], s: f64) -> [f64; 2] {
+    let ganz = umfang(h);
+    let mut rest = s.rem_euclid(ganz);
+    for i in 0..h.len() {
+        let (a, b) = (h[i], h[(i + 1) % h.len()]);
+        let l = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        if rest <= l || i + 1 == h.len() {
+            let u = if l > 0.0 { (rest / l).min(1.0) } else { 0.0 };
+            return [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])];
+        }
+        rest -= l;
+    }
+    h[0]
+}
+
+/// Bogenlänge, bei der der Strahl von `m` in Richtung `r` das Polygon
+/// verlässt (`m` liegt innen).
+fn bogen_in_richtung(h: &[[f64; 2]], m: [f64; 2], r: [f64; 2]) -> f64 {
+    let mut s = 0.0;
+    for i in 0..h.len() {
+        let (a, b) = (h[i], h[(i + 1) % h.len()]);
+        let e = [b[0] - a[0], b[1] - a[1]];
+        let l = (e[0] * e[0] + e[1] * e[1]).sqrt();
+        // m + t·r = a + u·e
+        let det = r[0] * (-e[1]) - r[1] * (-e[0]);
+        if det.abs() > 1e-15 {
+            let w = [a[0] - m[0], a[1] - m[1]];
+            let t = (w[0] * (-e[1]) - w[1] * (-e[0])) / det;
+            let u = (r[0] * w[1] - r[1] * w[0]) / det;
+            if t > 0.0 && (-1e-12..=1.0 + 1e-12).contains(&u) {
+                return s + u.clamp(0.0, 1.0) * l;
+            }
+        }
+        s += l;
+    }
+    0.0
+}
+
+/// Richtung in der Ebene zum Umfangswinkel (0 = vorn = −y, 90 = links = +x).
+fn richtung(grad: f64) -> [f64; 2] {
+    let w = grad.to_radians();
+    [w.sin(), -w.cos()]
+}
+
+// ---------------------------------------------------------------------------
+// Hüllkörper
+// ---------------------------------------------------------------------------
+
+/// Was die Hüllkörper vom Körper brauchen (Szenenrahmen, m).
+#[derive(Debug, Clone, Copy)]
+pub struct Koerperteile<'a> {
+    pub punkte: &'a [[f64; 3]],
+    pub dreiecke: &'a [[u32; 3]],
+    /// Punkte des Rumpfs. Es zählt nur ihre größte zusammenhängende Gruppe:
+    /// CLOs Segmente (5.2) führen 8 Punkte der linken Hand als Rumpf.
+    pub rumpf: &'a [usize],
+    /// Punkte der Arme: links, rechts.
+    pub arme: [&'a [usize]; 2],
+    /// vordere Halsmitte (Drosselgrube), hintere Halsmitte (7. Halswirbel)
+    pub hals_vorn: [f64; 3],
+    pub hals_hinten: [f64; 3],
+    /// seitlicher Halspunkt links, rechts
+    pub hals_seitlich: [[f64; 3]; 2],
+    /// Schulterpunkt links, rechts
+    pub schulter: [[f64; 3]; 2],
+    /// Ellbogen links, rechts
+    pub ellbogen: [[f64; 3]; 2],
+}
+
+/// Hüllkörper um einen Oberarm: Achse und die Armpunkte in Achskoordinaten.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Armhuelle {
+    /// Achsenpunkt auf Höhe des Schulterpunkts (Lot von ihm auf die Achse).
+    pub schulter: [f64; 3],
+    /// Achse, zur Hand hin.
+    pub achse: [f64; 3],
+    /// senkrecht zur Achse: nach oben, nach vorn
+    pub oben: [f64; 3],
+    pub vorn: [f64; 3],
+    /// Armpunkte als (t längs der Achse ab dem Achsenpunkt der Schulter,
+    /// Koordinate oben, Koordinate vorn), m.
+    pub punkte: Vec<[f64; 3]>,
+}
+
+impl Armhuelle {
+    /// Das Armprisma für `t_unten`…`t_oben`: konvexe Hülle der Armpunkte dort
+    /// in den Koordinaten (oben, vorn), um `abstand` versetzt (gegen den
+    /// Uhrzeigersinn).
+    pub fn umriss(&self, t_unten: f64, t_oben: f64, abstand: f64) -> Vec<[f64; 2]> {
+        let p: Vec<[f64; 2]> = self.punkte.iter().filter(|p| (t_unten..=t_oben).contains(&p[0])).map(|p| [p[1], p[2]]).collect();
+        versetzt(&huelle(p), abstand)
+    }
+}
+
+/// Bezugshöhen am Körper (m über dem Boden).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hoehen {
+    pub hals_vorn: f64,
+    pub hals_hinten: f64,
+    pub hals_seitlich: f64,
+    pub schulter: f64,
+}
+
+/// Die Hüllkörper eines Körpers, ohne Abstand. Das Rumpfprisma entsteht
+/// erst beim Platzieren, über die Höhe der Rumpfteile.
+#[derive(Debug, Clone)]
+pub struct Huellen {
+    /// Rumpfpunkte (Lage).
+    rumpf: Vec<[f64; 3]>,
+    pub arme: [Armhuelle; 2],
+    /// Halsmitte (x, y) und Radius.
+    pub hals_mitte: [f64; 2],
+    pub hals_radius: f64,
+    pub hoehen: Hoehen,
+}
+
+/// Hauptachse (größter Eigenwert der Streuung) durch Potenziteration.
+fn hauptachse(p: &[[f64; 3]], m: [f64; 3], start: [f64; 3]) -> [f64; 3] {
+    let mut c = [[0.0; 3]; 3];
+    for q in p {
+        let d = sub(*q, m);
+        for i in 0..3 {
+            for j in 0..3 {
+                c[i][j] += d[i] * d[j];
+            }
+        }
+    }
+    let mut v = mul(start, 1.0 / norm(start));
+    for _ in 0..200 {
+        let w = [dot(c[0], v), dot(c[1], v), dot(c[2], v)];
+        let l = norm(w);
+        if l == 0.0 {
+            break;
+        }
+        v = mul(w, 1.0 / l);
+    }
+    if dot(v, start) < 0.0 {
+        mul(v, -1.0)
+    } else {
+        v
+    }
+}
+
+/// Die größte über Netzkanten zusammenhängende Gruppe aus `auswahl`.
+fn groesste_gruppe(auswahl: &[usize], dreiecke: &[[u32; 3]], n: usize) -> Vec<usize> {
+    let mut drin = vec![false; n];
+    for &i in auswahl {
+        drin[i] = true;
+    }
+    let mut eltern: Vec<usize> = (0..n).collect();
+    fn wurzel(e: &mut [usize], mut i: usize) -> usize {
+        while e[i] != i {
+            e[i] = e[e[i]];
+            i = e[i];
+        }
+        i
+    }
+    for d in dreiecke {
+        for k in 0..3 {
+            let (a, b) = (d[k] as usize, d[(k + 1) % 3] as usize);
+            if drin[a] && drin[b] {
+                let (ra, rb) = (wurzel(&mut eltern, a), wurzel(&mut eltern, b));
+                eltern[ra] = rb;
+            }
+        }
+    }
+    let mut groesse = vec![0usize; n];
+    for &i in auswahl {
+        let w = wurzel(&mut eltern, i);
+        groesse[w] += 1;
+    }
+    let Some(beste) = (0..n).max_by_key(|&w| groesse[w]) else { return Vec::new() };
+    auswahl.iter().copied().filter(|&i| wurzel(&mut eltern, i) == beste).collect()
+}
+
+fn normiert(a: [f64; 3]) -> [f64; 3] {
+    mul(a, 1.0 / norm(a))
+}
+
+impl Huellen {
+    pub fn neu(k: &Koerperteile) -> Result<Huellen, String> {
+        if k.rumpf.is_empty() {
+            return Err("keine Rumpfpunkte".into());
+        }
+        let mut arme = [None, None];
+        for (s, arm) in k.arme.iter().enumerate() {
+            let (sp, ep) = (k.schulter[s], k.ellbogen[s]);
+            let se = sub(ep, sp);
+            let lse = norm(se);
+            if lse < 1e-3 {
+                return Err("Schulter und Ellbogen fallen zusammen".into());
+            }
+            // Oberarm: Armpunkte zwischen Schulter und Ellbogen.
+            let ober: Vec<[f64; 3]> = arm
+                .iter()
+                .map(|&i| k.punkte[i])
+                .filter(|&p| (0.0..=lse).contains(&(dot(sub(p, sp), se) / lse)))
+                .collect();
+            if ober.len() < 10 {
+                return Err(format!("Arm {}: nur {} Oberarmpunkte", ["links", "rechts"][s], ober.len()));
+            }
+            let m = mul(ober.iter().fold([0.0; 3], |a, &p| add(a, p)), 1.0 / ober.len() as f64);
+            let achse = hauptachse(&ober, m, se);
+            let lot = |p: [f64; 3]| add(m, mul(achse, dot(sub(p, m), achse)));
+            let oben = normiert(sub([0.0, 0.0, 1.0], mul(achse, achse[2])));
+            let vorn = {
+                let v = normiert(cross(achse, oben));
+                if v[1] > 0.0 {
+                    mul(v, -1.0)
+                } else {
+                    v
+                }
+            };
+            let schulter = lot(sp);
+            let punkte = arm
+                .iter()
+                .map(|&i| {
+                    let p = k.punkte[i];
+                    let d = sub(p, lot(p));
+                    [dot(sub(p, schulter), achse), dot(d, oben), dot(d, vorn)]
+                })
+                .collect();
+            arme[s] = Some(Armhuelle { schulter, achse, oben, vorn, punkte });
+        }
+        let rumpf = groesste_gruppe(k.rumpf, k.dreiecke, k.punkte.len());
+        let hals = [k.hals_vorn, k.hals_hinten, k.hals_seitlich[0], k.hals_seitlich[1]];
+        let hals_mitte = [hals.iter().map(|p| p[0]).sum::<f64>() / 4.0, hals.iter().map(|p| p[1]).sum::<f64>() / 4.0];
+        let hals_radius =
+            hals.iter().map(|p| ((p[0] - hals_mitte[0]).powi(2) + (p[1] - hals_mitte[1]).powi(2)).sqrt()).fold(0.0, f64::max);
+        Ok(Huellen {
+            rumpf: rumpf.iter().map(|&i| k.punkte[i]).collect(),
+            arme: arme.map(|a| a.expect("beide Arme")),
+            hals_mitte,
+            hals_radius,
+            hoehen: Hoehen {
+                hals_vorn: k.hals_vorn[2],
+                hals_hinten: k.hals_hinten[2],
+                hals_seitlich: 0.5 * (k.hals_seitlich[0][2] + k.hals_seitlich[1][2]),
+                schulter: 0.5 * (k.schulter[0][2] + k.schulter[1][2]),
+            },
+        })
+    }
+
+    /// Das Rumpfprisma für die Höhen `z_unten`…`z_oben`: konvexe Hülle der
+    /// Rumpfpunkte dort, um `abstand` versetzt (gegen den Uhrzeigersinn).
+    pub fn rumpfumriss(&self, z_unten: f64, z_oben: f64, abstand: f64) -> Vec<[f64; 2]> {
+        let p: Vec<[f64; 2]> = self.rumpf.iter().filter(|p| (z_unten..=z_oben).contains(&p[2])).map(|p| [p[0], p[1]]).collect();
+        versetzt(&huelle(p), abstand)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lageangaben
+// ---------------------------------------------------------------------------
+
+/// Hüllkörper eines Teils.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Rumpf,
+    Hals,
+    /// 0 = links, 1 = rechts
+    Arm(usize),
+}
+
+/// Grundhöhe einer Höhenangabe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hoehenbezug {
+    /// Rumpf, Hals: über dem Boden. Arm: ab dem Schulterpunkt längs der Achse.
+    Null,
+    HalsVorn,
+    HalsHinten,
+    HalsSeitlich,
+    Schulter,
+}
+
+/// Eine Zeile der Lagedatei.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lageangabe {
+    pub teil: String,
+    pub zone: Zone,
+    /// Bezugspunkt (Musterpunkt); ohne: Mitte des Teils (Hüllrechteck).
+    pub punkt: Option<String>,
+    /// Umfangslage in Grad (siehe Moduldoku) und Versatz als Bogenlänge (m).
+    pub umfang_grad: f64,
+    pub umfang_bogen: f64,
+    pub hoehe: (Hoehenbezug, f64),
+    pub gespiegelt: bool,
+    /// Drehung des Teils um den Bezugspunkt, Grad, gegen den Uhrzeigersinn
+    /// wie im Musterbild.
+    pub drehung_grad: f64,
+    /// Abstand zur Haut für dieses Teil (m); ohne: der der Lagedatei.
+    pub abstand: Option<f64>,
+    /// Dicke der Folie dieses Teils (m), Laminat als Gesamtdicke; ohne: die
+    /// des Materials ([`crate::Material::mit_dicke`]).
+    pub dicke: Option<f64>,
+}
+
+/// Die Lagedatei: Abstand der Hüllkörper und je Teil eine Angabe.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lageliste {
+    pub abstand: f64,
+    pub angaben: Vec<Lageangabe>,
+}
+
+fn zahl(s: &str) -> Result<f64, String> {
+    s.trim().replace(',', ".").parse::<f64>().map_err(|_| format!("keine Zahl: {s:?}"))
+}
+
+/// „basis [±zahl]“: Basis aus `namen`, sonst eine bloße Zahl mit Basis `null`.
+fn mit_zusatz<T: Copy>(s: &str, namen: &[(&str, T)], null: T) -> Result<(T, f64), String> {
+    let s = s.trim().to_lowercase();
+    for &(n, w) in namen {
+        if let Some(rest) = s.strip_prefix(n) {
+            let rest = rest.trim();
+            if rest.is_empty() {
+                return Ok((w, 0.0));
+            }
+            // `hals seitlich -2,24`, auch ohne Vorzeichen (`hals seitlich 0`).
+            if rest.starts_with('+') || rest.starts_with('-') || rest.starts_with(|c: char| c.is_ascii_digit()) {
+                return Ok((w, zahl(&rest.replace(' ', ""))?));
+            }
+        }
+    }
+    Ok((null, zahl(&s)?))
+}
+
+/// Liest eine Lagedatei:
+///
+/// ```text
+/// # Kommentar
+/// abstand 2                       (cm, optional; Vorgabe 2)
+/// Teil | Zone | Punkt | Umfang | Höhe | Optionen
+/// ```
+///
+/// Zone: `rumpf`, `hals`, `arm links`, `arm rechts`. Punkt: ein Musterpunkt
+/// oder `-` für die Mitte des Teils. Umfang: Grad oder `vorn`, `links`,
+/// `hinten`, `rechts` (am Arm `oben`, `vorn`, `unten`, `hinten`) mit
+/// optionalem `+N`/`-N` Grad oder `+Ncm`. Höhe in cm: am Rumpf und Hals über dem Boden
+/// oder `hals vorn`, `hals hinten`, `hals seitlich`, `schulter` ± cm; am Arm
+/// ab dem Schulterpunkt längs der Achse zur Hand. Optionen: `gespiegelt`,
+/// `drehung N` (Grad), `abstand N` (cm, nur für dieses Teil), `dicke N` (mm,
+/// Folie bzw. Laminat dieses Teils). Ein Zusatz mit `cm` (`vorn +19,3cm`) ist Bogenlänge
+/// statt Grad.
+pub fn lies_lage(text: &str) -> Result<Lageliste, String> {
+    let mut liste = Lageliste { abstand: ABSTAND, angaben: Vec::new() };
+    for (nr, zeile) in text.lines().enumerate() {
+        let z = zeile.split('#').next().unwrap_or("").trim();
+        if z.is_empty() {
+            continue;
+        }
+        let fehler = |m: String| format!("Zeile {}: {m}", nr + 1);
+        if let Some(rest) = z.strip_prefix("abstand") {
+            liste.abstand = zahl(rest).map_err(fehler)? / 100.0;
+            continue;
+        }
+        let f: Vec<&str> = z.split('|').map(str::trim).collect();
+        if !(5..=6).contains(&f.len()) {
+            return Err(fehler(format!("erwartet 5 oder 6 Felder, gefunden {}", f.len())));
+        }
+        let zone = match f[1].to_lowercase().as_str() {
+            "rumpf" => Zone::Rumpf,
+            "hals" => Zone::Hals,
+            "arm links" => Zone::Arm(0),
+            "arm rechts" => Zone::Arm(1),
+            andere => return Err(fehler(format!("unbekannte Zone {andere:?}"))),
+        };
+        let punkt = (f[2] != "-").then(|| f[2].to_string());
+        let umfang_namen: &[(&str, f64)] = if matches!(zone, Zone::Arm(_)) {
+            &[("oben", 0.0), ("vorn", 90.0), ("unten", 180.0), ("hinten", 270.0)]
+        } else {
+            &[("vorn", 0.0), ("links", 90.0), ("hinten", 180.0), ("rechts", 270.0)]
+        };
+        let (umfang, bogen_cm) = match f[3].trim().strip_suffix("cm") {
+            Some(rest) => (rest, true),
+            None => (f[3], false),
+        };
+        let (basis, plus) = mit_zusatz(umfang, umfang_namen, 0.0).map_err(fehler)?;
+        let (plus_grad, umfang_bogen) = if bogen_cm { (0.0, plus / 100.0) } else { (plus, 0.0) };
+        let hoehe_namen = [
+            ("hals vorn", Hoehenbezug::HalsVorn),
+            ("hals hinten", Hoehenbezug::HalsHinten),
+            ("hals seitlich", Hoehenbezug::HalsSeitlich),
+            ("schulter", Hoehenbezug::Schulter),
+        ];
+        let (bezug, cm) = mit_zusatz(f[4], &hoehe_namen, Hoehenbezug::Null).map_err(fehler)?;
+        let (mut gespiegelt, mut drehung_grad, mut abstand, mut dicke) = (false, 0.0, None, None);
+        if let Some(opt) = f.get(5) {
+            let w: Vec<&str> = opt.split_whitespace().collect();
+            let mut i = 0;
+            while i < w.len() {
+                match w[i] {
+                    "gespiegelt" => gespiegelt = true,
+                    "drehung" => {
+                        drehung_grad = zahl(w.get(i + 1).copied().unwrap_or("")).map_err(fehler)?;
+                        i += 1;
+                    }
+                    "abstand" => {
+                        abstand = Some(zahl(w.get(i + 1).copied().unwrap_or("")).map_err(fehler)? / 100.0);
+                        i += 1;
+                    }
+                    "dicke" => {
+                        dicke = Some(zahl(w.get(i + 1).copied().unwrap_or("")).map_err(fehler)? / 1000.0);
+                        i += 1;
+                    }
+                    andere => return Err(fehler(format!("unbekannte Option {andere:?}"))),
+                }
+                i += 1;
+            }
+        }
+        liste.angaben.push(Lageangabe {
+            teil: f[0].to_string(),
+            zone,
+            punkt,
+            umfang_grad: basis + plus_grad,
+            umfang_bogen,
+            hoehe: (bezug, cm / 100.0),
+            gespiegelt,
+            drehung_grad,
+            abstand,
+            dicke,
+        });
+    }
+    Ok(liste)
+}
+
+// ---------------------------------------------------------------------------
+// Platzieren
+// ---------------------------------------------------------------------------
+
+/// Ein platziertes Teil: wie seine Musterpunkte in den Raum kommen.
+#[derive(Debug, Clone)]
+struct Abwicklung {
+    zone: Zone,
+    /// Bezugspunkt im Muster (mm).
+    anker: [f64; 2],
+    drehung: f64,
+    spiegel: f64,
+    /// Rumpf: Bogenlänge des Ankers; Hals, Arm: Winkel des Ankers (rad).
+    um: f64,
+    /// Rumpf: Bogenlänge der Richtung ohne Versatz (vorn, hinten …); um sie
+    /// weitet sich die Hülle ([`Platzierung::weite_bei`]).
+    um_mitte: f64,
+    /// Rumpf, Hals: Höhe des Ankers; Arm: Lage längs der Achse.
+    hoch: f64,
+    /// Rumpf: Index des Prismas; Hals: Radius mit Abstand.
+    prisma: usize,
+    radius: f64,
+    /// Arm: das Armprisma mit Abstand; `um` ist die Bogenlänge des Ankers.
+    armumriss: Vec<[f64; 2]>,
+    dicke: Option<f64>,
+}
+
+/// Das Ergebnis: das Netz nur mit den platzierten Teilen und Nähten
+/// zwischen ihnen, die Abwicklung je Teil und was weggelassen wurde.
+#[derive(Debug, Clone)]
+pub struct Platzierung {
+    pub netz: Musternetz,
+    abwicklung: Vec<Abwicklung>,
+    /// Rumpfprismen je Abstand.
+    prismen: Vec<Vec<[f64; 2]>>,
+    arme: [Armhuelle; 2],
+    hals_mitte: [f64; 2],
+    /// Teile ohne Lageangabe (nicht in der Szene).
+    pub weggelassen: Vec<String>,
+    /// Nähte, von denen ein Teil fehlt.
+    pub naehte_weggelassen: Vec<String>,
+    /// Höhenbereich des Rumpfprismas (m).
+    pub rumpf_hoehen: (f64, f64),
+    /// Mitte des Rumpfs (x, y), um die sich die Hülle weitet.
+    mitte: [f64; 2],
+    /// Weite der Rumpfhülle je [`WEITE_DZ`] ab `rumpf_hoehen.0` (≥ 1).
+    weite: Vec<f64>,
+}
+
+/// Höhenschritt der Weite (m).
+pub const WEITE_DZ: f64 = 0.02;
+
+impl Platzierung {
+    /// Weite der Rumpfhülle in der Höhe `z` (m): 1, wo die Rumpfteile
+    /// zusammen nicht breiter sind als das Prisma; sonst ihr Verhältnis,
+    /// geglättet und nach unten nie abnehmend (Befund 102).
+    pub fn weite_bei(&self, z: f64) -> f64 {
+        if self.weite.is_empty() {
+            return 1.0;
+        }
+        let u = ((z - self.rumpf_hoehen.0) / WEITE_DZ - 0.5).clamp(0.0, (self.weite.len() - 1) as f64);
+        let (i, f) = (u.floor() as usize, u - u.floor());
+        let j = (i + 1).min(self.weite.len() - 1);
+        self.weite[i] * (1.0 - f) + self.weite[j] * f
+    }
+
+    /// Das Rumpfprisma eines Teils (Umriss gegen den Uhrzeigersinn, m).
+    pub fn rumpfumriss(&self, ti: usize) -> &[[f64; 2]] {
+        &self.prismen[self.abwicklung[ti].prisma]
+    }
+
+    /// Je Teil: Bezugspunkt im Muster (mm), Umfangslage (Bogenlänge in m am
+    /// Rumpf, Winkel in rad an Hals und Arm) und Höhe bzw. Lage längs der
+    /// Armachse (m).
+    pub fn anker(&self, ti: usize) -> ([f64; 2], f64, f64) {
+        let a = &self.abwicklung[ti];
+        (a.anker, a.um, a.hoch)
+    }
+
+    /// Dicke aus der Lageangabe von Teil `ti` (m), falls angegeben.
+    pub fn dicke(&self, ti: usize) -> Option<f64> {
+        self.abwicklung[ti].dicke
+    }
+
+    /// Lage des Musterpunkts `q` (mm) von Teil `ti` (Index in [`Self::netz`]).
+    pub fn lage(&self, ti: usize, q: [f64; 2]) -> [f64; 3] {
+        let a = &self.abwicklung[ti];
+        // Muster: x rechts, y unten → e: x rechts, y oben (m); drehen, spiegeln.
+        let e = [(q[0] - a.anker[0]) * 1e-3, -(q[1] - a.anker[1]) * 1e-3];
+        let (s, c) = a.drehung.sin_cos();
+        let e = [a.spiegel * (e[0] * c - e[1] * s), e[0] * s + e[1] * c];
+        match a.zone {
+            Zone::Rumpf => {
+                // Geweitete Hülle: längentreu in der Breite, um die Richtung
+                // des Teils (vorn, hinten …) und die Mitte des Rumpfs.
+                let (s, z) = (a.um + e[0], a.hoch + e[1]);
+                let w = self.weite_bei(z);
+                let q = auf_polygon(&self.prismen[a.prisma], a.um_mitte + (s - a.um_mitte) / w);
+                [self.mitte[0] + w * (q[0] - self.mitte[0]), self.mitte[1] + w * (q[1] - self.mitte[1]), z]
+            }
+            Zone::Hals => {
+                let w = a.um + e[0] / a.radius;
+                [self.hals_mitte[0] + a.radius * w.cos(), self.hals_mitte[1] + a.radius * w.sin(), a.hoch + e[1]]
+            }
+            Zone::Arm(s) => {
+                let z = &self.arme[s];
+                // Muster-x zeigt für den Betrachter von außen nach rechts:
+                // oben auf dem Arm ist das oben × Achse.
+                let sigma = dot(cross(z.oben, z.achse), z.vorn).signum();
+                let t = a.hoch - e[1];
+                let q = auf_polygon(&a.armumriss, a.um + sigma * e[0]);
+                add(add(z.schulter, mul(z.achse, t)), add(mul(z.oben, q[0]), mul(z.vorn, q[1])))
+            }
+        }
+    }
+}
+
+/// Mitte des Hüllrechtecks eines Teils (mm).
+fn teilmitte(punkte: &[[f64; 2]]) -> [f64; 2] {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in punkte {
+        for k in 0..2 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    [0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1])]
+}
+
+/// Legt die Teile mit Lageangabe um den Körper. Bezugspunkte sucht sie unter
+/// den Punktknoten des Teils, dann unter denen aller Teile.
+pub fn platziere(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen) -> Result<Platzierung, String> {
+    platziere_mit(netz, liste, huellen, true)
+}
+
+/// Wie [`platziere`]; `weiten = false` lässt die Rumpfhülle senkrecht (zum
+/// Vergleich, Befund 102).
+pub fn platziere_mit(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen, weiten: bool) -> Result<Platzierung, String> {
+    let punkt = |teil: &klon3d_mesh::Teilnetz, name: &str| -> Option<[f64; 2]> {
+        std::iter::once(teil)
+            .chain(netz.teile.iter())
+            .find_map(|t| t.punktknoten.iter().find(|(n, _)| n == name).map(|&(_, i)| t.punkte[i as usize]))
+    };
+    // Teilnamen wie in der Nahtliste: genau, sonst der Name hinter dem
+    // letzten " - " (Seamly stellt den Blocknamen voran).
+    let mut angabe: Vec<Option<&Lageangabe>> = vec![None; netz.teile.len()];
+    for a in &liste.angaben {
+        let genau: Vec<usize> = (0..netz.teile.len()).filter(|&i| netz.teile[i].teil == a.teil).collect();
+        let wahl = if genau.is_empty() {
+            (0..netz.teile.len()).filter(|&i| netz.teile[i].teil.rsplit(" - ").next() == Some(a.teil.as_str())).collect()
+        } else {
+            genau
+        };
+        match wahl[..] {
+            [i] if angabe[i].is_some() => return Err(format!("Teil {:?} hat zwei Lageangaben", a.teil)),
+            [i] => angabe[i] = Some(a),
+            [] => return Err(format!("Lageangabe für unbekanntes Teil {:?}", a.teil)),
+            _ => return Err(format!("Teilname {:?} ist mehrdeutig", a.teil)),
+        }
+    }
+    // Teile auswählen, Indizes umschreiben.
+    let mut neu_index = vec![None; netz.teile.len()];
+    let mut teile = Vec::new();
+    let mut angaben = Vec::new();
+    let mut weggelassen = Vec::new();
+    for (i, t) in netz.teile.iter().enumerate() {
+        match angabe[i] {
+            Some(a) => {
+                neu_index[i] = Some(teile.len());
+                teile.push(t.clone());
+                angaben.push(a);
+            }
+            None => weggelassen.push(t.teil.clone()),
+        }
+    }
+    let mut naehte = Vec::new();
+    let mut naehte_weggelassen = Vec::new();
+    for n in &netz.naehte {
+        let tn: Option<Vec<_>> = n
+            .teilnaehte
+            .iter()
+            .map(|t| {
+                let (a, b) = (neu_index[t.teil_a]?, neu_index[t.teil_b]?);
+                let mut t = t.clone();
+                t.teil_a = a;
+                t.teil_b = b;
+                Some(t)
+            })
+            .collect();
+        match tn {
+            Some(tn) => naehte.push(Nahtnetz { teilnaehte: tn, ..n.clone() }),
+            None => naehte_weggelassen.push(n.kennung.clone()),
+        }
+    }
+
+    // Anker und Höhen; daraus der Höhenbereich der Rumpfteile.
+    let h = &huellen.hoehen;
+    let mut anker = Vec::new();
+    let (mut z_unten, mut z_oben) = (f64::INFINITY, f64::NEG_INFINITY);
+    for (t, a) in teile.iter().zip(&angaben) {
+        let q = match &a.punkt {
+            Some(n) => punkt(t, n).ok_or_else(|| format!("{}: Punktknoten {n:?} in keinem Teil", t.teil))?,
+            None => teilmitte(&t.punkte),
+        };
+        let basis = match a.hoehe.0 {
+            Hoehenbezug::Null => 0.0,
+            Hoehenbezug::HalsVorn => h.hals_vorn,
+            Hoehenbezug::HalsHinten => h.hals_hinten,
+            Hoehenbezug::HalsSeitlich => h.hals_seitlich,
+            Hoehenbezug::Schulter => h.schulter,
+        };
+        let hoch = basis + a.hoehe.1;
+        // Reichweite um den Anker (m), auch gedreht: Höhenbereich des Prismas.
+        let reich = t.punkte.iter().map(|p| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt() * 1e-3).fold(0.0, f64::max);
+        if a.zone == Zone::Rumpf {
+            z_unten = z_unten.min(hoch - reich);
+            z_oben = z_oben.max(hoch + reich);
+        }
+        anker.push((q, hoch, reich));
+    }
+    let abstand = |a: &Lageangabe| a.abstand.unwrap_or(liste.abstand);
+    // Ein Prisma je vorkommendem Abstand der Rumpfteile.
+    let mut prismen: Vec<(f64, Vec<[f64; 2]>)> = Vec::new();
+    for a in angaben.iter().filter(|a| a.zone == Zone::Rumpf) {
+        let ab = abstand(a);
+        if !prismen.iter().any(|(x, _)| *x == ab) {
+            let u = huellen.rumpfumriss(z_unten, z_oben.min(h.schulter), ab);
+            if u.len() < 3 {
+                return Err(format!("keine Rumpfpunkte zwischen {:.2} und {:.2} m", z_unten, z_oben));
+            }
+            prismen.push((ab, u));
+        }
+    }
+    // Mitte des Rumpfs: aus dem Prisma ohne Abstand, für alle gleich.
+    let mitte = if prismen.is_empty() {
+        [0.0; 2]
+    } else {
+        let u = huellen.rumpfumriss(z_unten, z_oben.min(h.schulter), 0.0);
+        let n = u.len() as f64;
+        [u.iter().map(|p| p[0]).sum::<f64>() / n, u.iter().map(|p| p[1]).sum::<f64>() / n]
+    };
+
+    let mut abwicklung = Vec::new();
+    for (a, &(q, hoch, reich)) in angaben.iter().zip(&anker) {
+        let ab = abstand(a);
+        let prisma = prismen.iter().position(|(x, _)| *x == ab).unwrap_or(0);
+        let radius = if a.zone == Zone::Hals { huellen.hals_radius + ab } else { 0.0 };
+        // Am Arm: das Prisma über die Länge des Teils.
+        let armumriss = match a.zone {
+            Zone::Arm(s) => {
+                let u = huellen.arme[s].umriss((hoch - reich).max(0.0), hoch + reich, ab);
+                if u.len() < 3 {
+                    return Err(format!("{}: keine Armpunkte zwischen {:.2} und {:.2} m längs der Achse", a.teil, hoch - reich, hoch + reich));
+                }
+                u
+            }
+            _ => Vec::new(),
+        };
+        let um_mitte = if a.zone == Zone::Rumpf { bogen_in_richtung(&prismen[prisma].1, mitte, richtung(a.umfang_grad)) } else { 0.0 };
+        let um = match a.zone {
+            Zone::Rumpf => um_mitte + a.umfang_bogen,
+            // Winkel in der Ebene: 0 = vorn (−y) entspricht −90° mathematisch.
+            Zone::Hals => (a.umfang_grad - 90.0).to_radians() + a.umfang_bogen / radius,
+            Zone::Arm(_) => {
+                let w = a.umfang_grad.to_radians();
+                bogen_in_richtung(&armumriss, [0.0, 0.0], [w.cos(), w.sin()]) + a.umfang_bogen
+            }
+        };
+        abwicklung.push(Abwicklung {
+                zone: a.zone,
+                anker: q,
+                drehung: a.drehung_grad.to_radians(),
+                spiegel: if a.gespiegelt { -1.0 } else { 1.0 },
+            um,
+            um_mitte,
+            hoch,
+            prisma,
+            radius,
+            armumriss,
+            dicke: a.dicke,
+        });
+    }
+
+    // Weite der Rumpfhülle: Sind die Rumpfteile in einer Höhe zusammen
+    // breiter als das Prisma (ausgestellte Rockbahnen), überlappten sie dort
+    // auf ihm, und die Saumecken rutschten zwischen die Beine (Befund 100).
+    // Je 2 cm: Summe der Breiten (Musterpunkte der Teile in der Abwicklung) ÷
+    // Umfang, mindestens 1, nach unten nie abnehmend (sonst eine Zwiebel),
+    // über ±4 cm geglättet.
+    let rumpf_hoehen = (z_unten, z_oben.min(h.schulter));
+    let mut weite = Vec::new();
+    if weiten && !prismen.is_empty() && rumpf_hoehen.1 > rumpf_hoehen.0 {
+        let fach = ((rumpf_hoehen.1 - rumpf_hoehen.0) / WEITE_DZ).ceil() as usize + 1;
+        let haupt = prismen.iter().position(|(x, _)| *x == liste.abstand).unwrap_or(0);
+        let p_umfang = umfang(&prismen[haupt].1);
+        let mut breite = vec![0.0; fach];
+        for (ti, a) in abwicklung.iter().enumerate().filter(|(_, a)| a.zone == Zone::Rumpf) {
+            let mut je: Vec<(f64, f64)> = vec![(f64::INFINITY, f64::NEG_INFINITY); fach];
+            for q in &teile[ti].punkte {
+                let e = [(q[0] - a.anker[0]) * 1e-3, -(q[1] - a.anker[1]) * 1e-3];
+                let (s, c) = a.drehung.sin_cos();
+                let e = [a.spiegel * (e[0] * c - e[1] * s), e[0] * s + e[1] * c];
+                let j = (((a.hoch + e[1]) - rumpf_hoehen.0) / WEITE_DZ).floor();
+                if j >= 0.0 && (j as usize) < fach {
+                    let b = &mut je[j as usize];
+                    b.0 = b.0.min(a.um + e[0]);
+                    b.1 = b.1.max(a.um + e[0]);
+                }
+            }
+            for (j, b) in je.iter().enumerate() {
+                if b.1 > b.0 {
+                    breite[j] += b.1 - b.0;
+                }
+            }
+        }
+        let roh: Vec<f64> = breite.iter().map(|b| (b / p_umfang).max(1.0)).collect();
+        let abwaerts = |v: &mut Vec<f64>| {
+            for j in (0..v.len().saturating_sub(1)).rev() {
+                v[j] = v[j].max(v[j + 1]);
+            }
+        };
+        let mut w = roh;
+        abwaerts(&mut w);
+        let glatt: Vec<f64> = (0..fach).map(|j| {
+            let (a, b) = (j.saturating_sub(2), (j + 2).min(fach - 1));
+            w[a..=b].iter().sum::<f64>() / (b - a + 1) as f64
+        }).collect();
+        w = glatt;
+        abwaerts(&mut w);
+        if w.iter().any(|&x| x > 1.0 + 1e-6) {
+            weite = w;
+        }
+    }
+
+    Ok(Platzierung {
+        netz: Musternetz { teile, naehte, ..netz.clone() },
+        abwicklung,
+        prismen: prismen.into_iter().map(|(_, u)| u).collect(),
+        arme: huellen.arme.clone(),
+        hals_mitte: huellen.hals_mitte,
+        weggelassen,
+        naehte_weggelassen,
+        rumpf_hoehen,
+        mitte,
+        weite,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn huelle_und_versatz() {
+        let q = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]];
+        let h = huelle(q);
+        assert_eq!(h.len(), 4);
+        assert!((umfang(&h) - 4.0).abs() < 1e-12);
+        // Quadrat um 0,1 versetzt: Kanten parallel, Ecken auf Gehrung.
+        let v = versetzt(&h, 0.1);
+        assert!((umfang(&v) - 4.8).abs() < 1e-12, "{}", umfang(&v));
+        // Strahl von der Mitte nach rechts trifft die rechte Kante bei y = 0,5.
+        let s = bogen_in_richtung(&h, [0.5, 0.5], [1.0, 0.0]);
+        let p = auf_polygon(&h, s);
+        assert!((p[0] - 1.0).abs() < 1e-12 && (p[1] - 0.5).abs() < 1e-12, "{p:?}");
+    }
+
+    #[test]
+    fn lagedatei_lesen() {
+        let l = lies_lage(
+            "# Prüfung\nabstand 3\nVorn | rumpf | VK0 | vorn +5 | hals vorn -2,5 |\nÄrmel | arm rechts | - | oben | 0 | gespiegelt drehung 10 abstand 1\nKragen | hals | KHM | hinten -4,5cm | 140 |\n",
+        )
+        .unwrap();
+        assert!((l.abstand - 0.03).abs() < 1e-12);
+        assert_eq!(l.angaben.len(), 3);
+        let v = &l.angaben[0];
+        assert_eq!((v.zone, v.punkt.as_deref(), v.umfang_grad), (Zone::Rumpf, Some("VK0"), 5.0));
+        assert_eq!(v.hoehe.0, Hoehenbezug::HalsVorn);
+        assert!((v.hoehe.1 + 0.025).abs() < 1e-12);
+        let a = &l.angaben[1];
+        assert_eq!((a.zone, a.punkt.as_ref(), a.gespiegelt, a.drehung_grad), (Zone::Arm(1), None, true, 10.0));
+        assert_eq!(a.abstand, Some(0.01));
+        let k = &l.angaben[2];
+        assert_eq!((k.umfang_grad, k.hoehe), (180.0, (Hoehenbezug::Null, 1.4)));
+        assert!((k.umfang_bogen + 0.045).abs() < 1e-12);
+        assert!(lies_lage("X | bein | - | 0 | 0").is_err());
+        assert!(lies_lage("X | rumpf | - | vorn | 0 | quer").is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Anziehen
+// ---------------------------------------------------------------------------
+
+/// Der Ablauf beim Anziehen (Befunde 96, 98).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Anziehen {
+    /// Nähen: die Ruhelänge jeder Nahtfeder schrumpft mit dieser
+    /// Geschwindigkeit (m/s) bis 0 ([`Szene::naht_kuerzen`]).
+    pub naht_geschwindigkeit: f64,
+    /// Bilder des Nähens; währenddessen Körperpunkt gegen Stoffdreieck.
+    pub naehbilder: usize,
+    /// Danach, ohne diese Korrektur und mit voller Schwerkraft, Einschwingen:
+    /// mindestens so viele Bilder, dann bis sich in zwei Sekunden
+    /// hintereinander kein Teil im Mittel um mehr als
+    /// [`Anziehen::ruhe_sinken`] je Sekunde hebt oder senkt, höchstens
+    /// `einschwingen_max` Bilder. Der lange Rock v36 setzte sich nach 2 s noch
+    /// (6,3 mm in der Haltephase, nach 12 s Einschwingen 0,0 mm; Befund 102).
+    pub einschwingen_min: usize,
+    pub einschwingen_max: usize,
+    /// Höhenänderung je Sekunde (m), unter der ein Teil als eingeschwungen gilt:
+    /// die Hälfte dessen, was ADR-023 in der Haltephase erlaubt.
+    pub ruhe_sinken: f64,
+    /// Bilder der Haltephase nach dem Einschwingen (ADR-023: 10 s).
+    pub haltebilder: usize,
+    /// Durchgänge Körperpunkt gegen Stoffdreieck je Schritt beim Nähen.
+    pub koerperpunkt_durchgaenge: usize,
+    /// Anteil der Schwerkraft beim Nähen (1 = volle Schwerkraft, 0 = keine);
+    /// beim Ruhen gilt sie wieder voll. 0 bildet nach, dass man ein Teil
+    /// hält, bis es zu ist (ADR-023, Punkt 2): Trägerlose Teile rutschen
+    /// sonst ab, bevor die Nähte zu sind (Bustier v1: 24 cm).
+    pub schwerkraft_naehen: f64,
+    /// Steifigkeit der Nahtfeder beim Anziehen (N/m), statt
+    /// [`crate::ImplizitParameter::naht_k`] (500 N/m wie CLOs `fSeamSpringK`,
+    /// Umrechnung nicht belegt). 2.000 N/m schließt an allen Prüfmustern mehr
+    /// Nahtpaare (Befund 98); 5.000 N/m bringt die Bluse3 v2 nicht zur Ruhe.
+    pub naht_k: f64,
+    /// Höchstzahl der CG-Iterationen beim Anziehen statt
+    /// [`crate::ImplizitParameter::cg_max`] (50 wie CLO). Mit 50 erreichte an
+    /// Bluse3, Bluse1, Bolero und Rock keine Lösung die Toleranz 10⁻⁵, und
+    /// der Rock kam nicht zur Ruhe — seine Bewegung nahm zu, und 0,2 mm
+    /// andere Anfangslage entschieden, ob er hält (Befund 102). Mit 600
+    /// konvergiert fast jede Lösung (Rock: 2 von 1.835 nicht, im Mittel 116
+    /// Iterationen); die Grenze greift nur bei den schweren, die Rechenzeit
+    /// ist kaum höher als mit 300 (dort 182 nicht konvergiert, und der Rock
+    /// setzte sich in der Haltephase noch 6,7 mm).
+    pub cg_max: usize,
+}
+
+/// Länge der Haltephase: 10 s bei 1/60 s je Bild (ADR-023).
+pub const HALTEBILDER: usize = 600;
+
+/// Was [`anziehen`] meldet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Angezogen {
+    /// Vor dem Nähen aus dem Körper geschobene Punkte und ihre größte Tiefe
+    /// (m, innen positiv; [`heraus_schieben`]).
+    pub heraus: usize,
+    pub heraus_tiefe: f64,
+    /// Bilder des Einschwingens; ob es vor `einschwingen_max` ruhig wurde.
+    pub einschwingbilder: usize,
+    pub eingeschwungen: bool,
+    /// Nach diesem Bild begann die Haltephase.
+    pub halt_ab: usize,
+    /// Sinken je Teil in der Haltephase (m, nach unten positiv), das
+    /// stärkste zuerst ([`crate::messung::sinken_je_teil`]).
+    pub sinken: Vec<(String, f64)>,
+}
+
+impl Default for Anziehen {
+    /// 0,1 m/s über 200 Bilder schließt Lücken bis 33 cm, gehalten (ohne
+    /// Schwerkraft), Nahtfeder 2.000 N/m, bis 600 CG-Iterationen; dann
+    /// Einschwingen 2–20 s, bis kein Teil mehr als 0,25 mm/s sinkt; dann 10 s
+    /// Haltephase.
+    fn default() -> Self {
+        Anziehen {
+            naht_geschwindigkeit: 0.1,
+            naehbilder: 200,
+            einschwingen_min: 120,
+            einschwingen_max: 1200,
+            ruhe_sinken: 0.25e-3,
+            haltebilder: HALTEBILDER,
+            koerperpunkt_durchgaenge: 2,
+            schwerkraft_naehen: 0.0,
+            naht_k: 2000.0,
+            cg_max: 600,
+        }
+    }
+}
+
+
+/// Abstand zur Haut, auf den [`heraus_schieben`] Stoffpunkte legt (m).
+pub const HERAUS_RAND: f64 = 0.005;
+
+/// Schiebt Stoffpunkte, die nach dem Auflegen im Körper liegen (näher als
+/// ihr Kollisionsabstand), längs der Normale auf [`HERAUS_RAND`] nach außen;
+/// die übrigen bleiben, wo sie sind (auch die Punkte bis 5 mm vor der Haut
+/// mitzuschieben kostete an der Bluse3 v2 1,8 % der Nahtpaare). Die
+/// Hüllkörper decken den Körper nicht überall: Über dem Rumpfprisma ragt die
+/// Schulter heraus, am Hals das Kinn (Bluse1 v25: 35 Punkte je Seite bis
+/// 11 mm tief, tiefer als der Kollider sucht). Gesucht wird bis 5 cm von der
+/// Haut. Rückgabe: verschobene Punkte, größte Tiefe (m, innen positiv).
+pub fn heraus_schieben(s: &mut Szene) -> (usize, f64) {
+    let (mut zahl, mut tiefste) = (0usize, 0.0f64);
+    for k in &s.koerper {
+        let Koerper::Netz { netz, versatz, .. } = k else { continue };
+        for (i, x) in s.x.iter_mut().enumerate() {
+            let Some(n) = netz.naechster(sub(*x, *versatz), 0.05) else { continue };
+            if n.abstand < s.kollisionsabstand[i] {
+                *x = add(add(n.punkt, *versatz), mul(n.normale, s.kollisionsabstand[i] + HERAUS_RAND));
+                zahl += 1;
+                tiefste = tiefste.max(-n.abstand);
+            }
+        }
+    }
+    (zahl, tiefste)
+}
+
+/// Ein Rechenweg, mit dem sich anziehen lässt: was er je Phase umstellt.
+/// Der implizite Weg nimmt Nahtfeder, CG-Grenze und Körperpunkt gegen
+/// Stoffdreieck aus [`Anziehen`]; XPBD ([`crate::CpuReferenz`]) hat seine
+/// Nahtnachgiebigkeit in der Szene und keinen Körperpunkt-Durchgang
+/// (Vergleich der Löser, Befund 109).
+pub trait Anziehbar: Rechenweg {
+    type Vorgaben;
+    /// Was vor dem Anziehen galt, zum Zurücksetzen.
+    fn vorgaben(&self) -> Self::Vorgaben;
+    fn setze_vorgaben(&mut self, v: Self::Vorgaben);
+    /// Vor jedem Bild: nähen oder ruhen.
+    fn phase(&mut self, a: &Anziehen, naehen: bool);
+}
+
+impl Anziehbar for ImplizitCg {
+    type Vorgaben = crate::implizit::ImplizitParameter;
+    fn vorgaben(&self) -> Self::Vorgaben {
+        self.param
+    }
+    fn setze_vorgaben(&mut self, v: Self::Vorgaben) {
+        self.param = v;
+    }
+    fn phase(&mut self, a: &Anziehen, naehen: bool) {
+        self.param.naht_k = a.naht_k;
+        self.param.cg_max = a.cg_max;
+        self.param.koerperpunkt_durchgaenge = if naehen { a.koerperpunkt_durchgaenge } else { 0 };
+    }
+}
+
+impl Anziehbar for crate::cpu::CpuReferenz {
+    type Vorgaben = ();
+    fn vorgaben(&self) {}
+    fn setze_vorgaben(&mut self, _: ()) {}
+    fn phase(&mut self, _: &Anziehen, _: bool) {}
+}
+
+/// Zieht die platzierten Teile an: erst Stoffpunkte aus dem Körper schieben
+/// ([`heraus_schieben`]), dann nähen mit begrenzter Geschwindigkeit und
+/// Körperpunkt gegen Stoffdreieck, dann mit voller Schwerkraft einschwingen,
+/// bis kein Teil mehr sinkt, dann die Haltephase (ADR-023). `nach_bild` sieht
+/// jedes Bild (Nummer ab 1, Szene, Rechenweg).
+pub fn anziehen<R: Anziehbar>(s: &mut Szene, rw: &mut R, a: &Anziehen, nach_bild: &mut dyn FnMut(usize, &Szene, &R)) -> Angezogen {
+    let (heraus, heraus_tiefe) = heraus_schieben(s);
+    let vorher = rw.vorgaben();
+    let g = s.param.schwerkraft;
+    s.naht_offen();
+    let mut bild = 0;
+    let mut schritt = |s: &mut Szene, rw: &mut R, naehen: bool| {
+        bild += 1;
+        rw.phase(a, naehen);
+        s.param.schwerkraft = if naehen { mul(g, a.schwerkraft_naehen) } else { g };
+        s.naht_kuerzen(a.naht_geschwindigkeit * s.param.bild_dt);
+        rw.bild(s);
+        nach_bild(bild, s, rw);
+        bild
+    };
+    for _ in 0..a.naehbilder {
+        schritt(s, rw, true);
+    }
+    // Einschwingen: je Sekunde die Höhenänderung der Teile prüfen, im
+    // Betrag — ein Teil, das zurückfedert, ist nicht ruhig (der Rock v36 galt
+    // sonst nach 4 s als ruhig und sank danach 7,9 mm). Zwei ruhige Sekunden
+    // hintereinander.
+    let je_sekunde = (1.0 / s.param.bild_dt).round().max(1.0) as usize;
+    let (mut einschwingbilder, mut eingeschwungen, mut ruhig) = (0, false, 0);
+    let mut probe = s.x.clone();
+    while einschwingbilder < a.einschwingen_max {
+        schritt(s, rw, false);
+        einschwingbilder += 1;
+        if einschwingbilder % je_sekunde == 0 {
+            let bewegt = crate::messung::sinken_je_teil(s, &probe).iter().map(|x| x.1.abs()).fold(0.0, f64::max);
+            probe.clone_from(&s.x);
+            ruhig = if bewegt <= a.ruhe_sinken * je_sekunde as f64 * s.param.bild_dt { ruhig + 1 } else { 0 };
+            if einschwingbilder >= a.einschwingen_min && ruhig >= 2 {
+                eingeschwungen = true;
+                break;
+            }
+        }
+    }
+    let halt_ab = a.naehbilder + einschwingbilder;
+    let x0 = s.x.clone();
+    for _ in 0..a.haltebilder {
+        schritt(s, rw, false);
+    }
+    rw.setze_vorgaben(vorher);
+    s.param.schwerkraft = g;
+    Angezogen { heraus, heraus_tiefe, einschwingbilder, eingeschwungen, halt_ab, sinken: crate::messung::sinken_je_teil(s, &x0) }
+}

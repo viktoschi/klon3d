@@ -1,0 +1,37 @@
+# Lage der Teile von bluse3_v2.sm2d vor dem Naehen (klon3d Stufe 4c)
+#
+# Teil | Zone | Bezugspunkt | Umfang | Hoehe | Optionen
+# Umfang am Rumpf und Hals in Grad von oben: 0 vorn, 90 links, 180 hinten, 270 rechts (Seiten der Traegerin),
+# mit "cm" als Bogenlaenge; am Arm: 0 oben, 90 vorn. Hoehe in cm, hier vom seitlichen Halspunkt aus.
+#
+# Vorder- und Rueckenteile sind so konstruiert, dass VN bzw. RS am seitlichen Halspunkt liegen; das
+# Armloch (VA, RA) liegt 21,2 cm tiefer. Vorderblock (Oberteil vorn, Untercup, Band Mitte) und
+# Rueckenblock (Rueckenteil Mitte) haengen je an einem Bezugspunkt der vorderen bzw. hinteren Mitte
+# und liegen zueinander wie im Muster; die Seitenteile sitzen mit dem Armloch an der Seite.
+# Vorderteile sind von aussen gesehen gezeichnet, Rueckenteile und Aermel gespiegelt dazu.
+# Nicht platziert (aufgeklebt, kommt mit den Klebezonen): Trim Oeffnung, Stehkragen Aussen, Donut, Scheiben.
+
+abstand 2
+
+# Vorderblock: VPB (vordere Mitte, Oberkante der Bruecke) liegt 27,8 cm unter VN.
+Oberteil vorn Links      | rumpf | VPB  | vorn | hals seitlich -27,8 |
+Oberteil vorn Rechts     | rumpf | VPB  | vorn | hals seitlich -27,8 |
+Untercup Links           | rumpf | VPB  | vorn | hals seitlich -27,8 |
+Untercup Rechts          | rumpf | VPB  | vorn | hals seitlich -27,8 |
+Band Mitte               | rumpf | VPB  | vorn | hals seitlich -27,8 |
+
+Oberteil seitlich Links  | rumpf | VA_L  | links  | hals seitlich -21,2 | abstand 0,5
+Oberteil seitlich Rechts | rumpf | VA_R  | rechts | hals seitlich -21,2 | abstand 0,5
+Band seitlich Links      | rumpf | VC3_L | links  | hals seitlich -35,7 | abstand 0,5
+Band seitlich Rechts     | rumpf | VC3_R | rechts | hals seitlich -35,7 | abstand 0,5
+
+# Rueckenblock: RNP (hintere Mitte am Halsausschnitt) liegt 2,2 cm unter RS.
+Rueckenteil Mitte Links  | rumpf | RNP  | hinten | hals seitlich -2,2 | gespiegelt
+Rueckenteil Mitte Rechts | rumpf | RNP  | hinten | hals seitlich -2,2 | gespiegelt
+Rueckenteil Seite Links  | rumpf | RA_L | links +7cm   | hals seitlich -21,2 | gespiegelt abstand 0,5
+Rueckenteil Seite Rechts | rumpf | RA_R | rechts -7cm  | hals seitlich -21,2 | gespiegelt abstand 0,5
+
+Aermel Kurz Links        | arm links  | B1_AM0  | oben | 0 | gespiegelt abstand 0,5
+Aermel Kurz Rechts       | arm rechts | B1_AM0R | oben | 0 | gespiegelt abstand 0,5
+
+Stehkragen Innen         | hals | KHM | hinten | hals seitlich -2,2 | abstand 3

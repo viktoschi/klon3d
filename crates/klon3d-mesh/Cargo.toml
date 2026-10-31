@@ -1,0 +1,11 @@
+[package]
+name = "klon3d-mesh"
+description = "Schnittteile als Dreiecksnetz: Randunterteilung, Triangulierung, Nahtpunkte"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+klon3d-pattern = { path = "../klon3d-pattern" }
+thiserror = { workspace = true }

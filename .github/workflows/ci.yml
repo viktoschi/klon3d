@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new revision of the same PR cancels the older run; main and manual runs
+# always run to completion.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Build and test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # The 47 public CLO projects (tabjy/clo3d-patterns, CC BY-SA 4.0) for the
+      # .zprj tests, pinned to the commit the counts refer to. Fetched only,
+      # never added to this repository.
+      - name: Restore third-party CLO projects
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/clo3d-patterns
+          key: clo3d-patterns-22d0c8aedc5afed6ffc5469ff5ae38522c4765d5
+      - name: Fetch third-party CLO projects
+        run: |
+          d="$RUNNER_TEMP/clo3d-patterns"
+          if [ "$(find "$d" -name '*.zprj' 2>/dev/null | wc -l)" -ne 47 ]; then
+            rm -rf "$d" && git init -q "$d"
+            git -C "$d" fetch -q --depth 1 https://github.com/tabjy/clo3d-patterns.git 22d0c8aedc5afed6ffc5469ff5ae38522c4765d5
+            git -C "$d" checkout -q FETCH_HEAD
+            rm -rf "$d/.git"
+          fi
+          echo "$(find "$d" -name '*.zprj' | wc -l) projects in $d"
+          echo "KLON3D_FREMD=$d" >> "$GITHUB_ENV"
+      # klon3d-view talks to Win32 directly and only builds on Windows.
+      - name: Build
+        run: cargo build --locked --workspace --exclude klon3d-view --all-targets
+      # Without a CLO installation the *_clo.rs tests report "skipped" and pass.
+      # --no-fail-fast: one failing test target does not hide the others.
+      - name: Test
+        run: cargo test --locked --workspace --exclude klon3d-view --no-fail-fast
+
+  viewer:
+    name: Build viewer (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build
+        run: cargo build --locked -p klon3d-view

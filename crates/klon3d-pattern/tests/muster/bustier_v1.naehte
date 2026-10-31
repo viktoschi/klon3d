@@ -1,0 +1,31 @@
+# Nahtliste zu bustier_v1.sm2d (Bustier_Top_parametrisch_v1), klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit
+# Gelesen aus den Kanten der Teile (klon3d naehte --kanten): gleiche Punktnamen und Laengen auf beiden Seiten.
+# Rumpfteile ohne Zugabe, Cups mit 0,3 (Cup an Cup) und 0,6 cm (Cup an Rumpf). Die hintere Mitte ist im
+# Muster eine Schnuerung mit Sichtschutz; fuer die Simulation ist sie als Naht geschlossen (S11).
+# Nicht genaeht: Sichtschutz hinter der Schnuerung.
+#
+# Kennung | Bezeichnung | Seite A | Seite B
+# Seite = Abschnitt + Abschnitt ...  (in Naehrichtung); Abschnitt = Teil: VON BIS v|r
+# v = vorwaerts in der Knotenreihenfolge des Teils, r = rueckwaerts
+
+S01R | Vorderteil / Seitenvorderteil rechts (Taille -> Cup) | Vorderteil mit Bruecke: WF_R G_R v | Seitenvorderteil rechts: WF_R G_R r
+S02R | Untercup innen rechts an Vorderteil (G -> J) | Vorderteil mit Bruecke: G_R J_R v | Untercup innen rechts: G_R J_R v
+S03R | Untercup aussen rechts an Seitenvorderteil (K -> G) | Seitenvorderteil rechts: K_R G_R v | Untercup aussen rechts: K_R G_R v
+S04R | Obercup rechts an Seitenvorderteil (K -> I) | Seitenvorderteil rechts: K_R I_R r | Obercup rechts: OK_R OI_R v
+S05R | Obercup rechts an Vorderteil (J -> C) | Vorderteil mit Bruecke: J_R C_R v | Obercup rechts: OJ_R OC_R r
+S06R | Obercup / Untercup innen rechts (J -> A) | Obercup rechts: OJ_R OA_R v | Untercup innen rechts: J_R A_R v
+S07R | Obercup / Untercup aussen rechts (A -> K) | Obercup rechts: OA_R OK_R v | Untercup aussen rechts: A_R K_R v
+S08R | Untercup innen / aussen rechts (A -> G) | Untercup innen rechts: A_R G_R v | Untercup aussen rechts: A_R G_R r
+S09R | Seitennaht rechts (Taille -> Oberkante) | Seitenvorderteil rechts: WS_R ST_R v | Seitenrueckteil rechts: BW_R BST_R v
+S10R | Teilungsnaht hinten rechts (Taille -> Oberkante) | Seitenrueckteil rechts: BSW_R BSTop_R r | Rueckteil rechts: BSW_R BSTop_R v
+S01L | Vorderteil / Seitenvorderteil links (Taille -> Cup) | Vorderteil mit Bruecke: WF_L G_L r | Seitenvorderteil links: WF_L G_L r
+S02L | Untercup innen links an Vorderteil (G -> J) | Vorderteil mit Bruecke: G_L J_L r | Untercup innen links: G_L J_L v
+S03L | Untercup aussen links an Seitenvorderteil (K -> G) | Seitenvorderteil links: K_L G_L v | Untercup aussen links: K_L G_L v
+S04L | Obercup links an Seitenvorderteil (K -> I) | Seitenvorderteil links: K_L I_L r | Obercup links: OK_L OI_L v
+S05L | Obercup links an Vorderteil (J -> C) | Vorderteil mit Bruecke: J_L C_L r | Obercup links: OJ_L OC_L r
+S06L | Obercup / Untercup innen links (J -> A) | Obercup links: OJ_L OA_L v | Untercup innen links: J_L A_L v
+S07L | Obercup / Untercup aussen links (A -> K) | Obercup links: OA_L OK_L v | Untercup aussen links: A_L K_L v
+S08L | Untercup innen / aussen links (A -> G) | Untercup innen links: A_L G_L v | Untercup aussen links: A_L G_L r
+S09L | Seitennaht links (Taille -> Oberkante) | Seitenvorderteil links: WS_L ST_L v | Seitenrueckteil links: BW_L BST_L v
+S10L | Teilungsnaht hinten links (Taille -> Oberkante) | Seitenrueckteil links: BSW_L BSTop_L r | Rueckteil links: BSW_L BSTop_L v
+S11 | Hintere Mitte (Schnuerung, fuer die Simulation geschlossen) | Rueckteil rechts: B0 BCT r | Rueckteil links: B0 BCT r

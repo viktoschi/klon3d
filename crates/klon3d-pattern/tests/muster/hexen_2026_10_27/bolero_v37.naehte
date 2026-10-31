@@ -1,0 +1,82 @@
+# Nahtliste zu bolero_v37.sm2d (bolero_34_v37_mit_Kragen), klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit (Befund 100)
+# Gelesen aus den Kanten (klon3d naehte --kanten). Die Aermelkugel hat sieben Falten (KF1-KF7, Kante A-M-B), der
+# Aermelsaum sechs (KS1-KS6) fuer die Manschette: die Stuecke zwischen den Falten sind so lang wie die Stuecke
+# zwischen den Faltmarken im Armloch (RKF, VKF) bzw. der Manschette (MF). Jedes Stueck ist eine eigene Naht; jede
+# Falte wird wie ein Abnaeher geschlossen (A-M auf B-M), der Stoff dazwischen faltet sich weg.
+# Nicht in der Liste: Stehkragen gestuft (Aussenlage, aufgeklebt), Scheiben, Donuts, Frog-Plaettchen (Hilfsteile).
+# Frei: Saum des Rumpfs, vordere Kanten (offen), Kragenoberkante und -enden, Manschettensaum.
+#
+# Kennung | Bezeichnung | Seite A | Seite B
+
+N01L | Schulternaht links | Rueckenteil 1x: RN_L RSP_L v | Vorderteil links 1x: VN VSP v
+N01R | Schulternaht rechts | Rueckenteil 1x: RN_R RSP_R r | Vorderteil rechts 1x: VNr VSPr r
+N02L | Seitennaht links | Rueckenteil 1x: RA_L RH_L v | Vorderteil links 1x: VA VH v
+N02R | Seitennaht rechts | Rueckenteil 1x: RA_R RH_R r | Vorderteil rechts 1x: VAr VHr r
+N03L | Aermelnaht links | Bischofaermel links 1x: SB_L SH_L r | Bischofaermel links 1x: SB_R SH_R v
+N03R | Aermelnaht rechts | Bischofaermel rechts 1x: SB_Rr SH_Rr v | Bischofaermel rechts 1x: SB_Lr SH_Lr r
+N04L | Manschette links geschlossen | Manschette links 1x: M1 M2 v | Manschette links 1x: M0 M3 r
+N04R | Manschette rechts geschlossen | Manschette rechts 1x: M1r M2r v | Manschette rechts 1x: M0r M3r r
+N10 | Halsnaht / Kragenansatz (rechts vorn -> hinten -> links vorn / Stehkragen Innenlage) | Vorderteil rechts 1x: VNKr VNr r + Rueckenteil 1x: RN_R RNP v + Rueckenteil 1x: RNP RN_L v + Vorderteil links 1x: VN VNK r | Stehkragen Innenlage 1x: KVN_R KVN_L v
+
+N05La | Armloch links, Stueck 1 zwischen den Falten | Rueckenteil 1x: RA_L RKF1_L r | Bischofaermel links 1x: SB_L KF1A v
+N05Lb | Armloch links, Stueck 2 zwischen den Falten | Rueckenteil 1x: RKF1_L RKF2_L r | Bischofaermel links 1x: KF1B KF2A v
+N05Lc | Armloch links, Stueck 3 zwischen den Falten | Rueckenteil 1x: RKF2_L RKF3_L r | Bischofaermel links 1x: KF2B KF3A v
+N05Ld | Armloch links, Stueck 4 zwischen den Falten | Rueckenteil 1x: RKF3_L RSP_L r | Bischofaermel links 1x: KF3B KF4A v
+N05Le | Armloch links, Stueck 5 zwischen den Falten | Vorderteil links 1x: VSP VKF5 v | Bischofaermel links 1x: KF4B KF5A v
+N05Lf | Armloch links, Stueck 6 zwischen den Falten | Vorderteil links 1x: VKF5 VKF6 v | Bischofaermel links 1x: KF5B KF6A v
+N05Lg | Armloch links, Stueck 7 zwischen den Falten | Vorderteil links 1x: VKF6 VKF7 v | Bischofaermel links 1x: KF6B KF7A v
+N05Lh | Armloch links, Stueck 8 zwischen den Falten | Vorderteil links 1x: VKF7 VA v | Bischofaermel links 1x: KF7B SB_R v
+N05Ra | Armloch rechts, Stueck 1 zwischen den Falten | Vorderteil rechts 1x: VAr VKF1r v | Bischofaermel rechts 1x: SB_Lr KF1Ar v
+N05Rb | Armloch rechts, Stueck 2 zwischen den Falten | Vorderteil rechts 1x: VKF1r VKF2r v | Bischofaermel rechts 1x: KF1Br KF2Ar v
+N05Rc | Armloch rechts, Stueck 3 zwischen den Falten | Vorderteil rechts 1x: VKF2r VKF3r v | Bischofaermel rechts 1x: KF2Br KF3Ar v
+N05Rd | Armloch rechts, Stueck 4 zwischen den Falten | Vorderteil rechts 1x: VKF3r VSPr v | Bischofaermel rechts 1x: KF3Br KF4Ar v
+N05Re | Armloch rechts, Stueck 5 zwischen den Falten | Rueckenteil 1x: RSP_R RKF5_R r | Bischofaermel rechts 1x: KF4Br KF5Ar v
+N05Rf | Armloch rechts, Stueck 6 zwischen den Falten | Rueckenteil 1x: RKF5_R RKF6_R r | Bischofaermel rechts 1x: KF5Br KF6Ar v
+N05Rg | Armloch rechts, Stueck 7 zwischen den Falten | Rueckenteil 1x: RKF6_R RKF7_R r | Bischofaermel rechts 1x: KF6Br KF7Ar v
+N05Rh | Armloch rechts, Stueck 8 zwischen den Falten | Rueckenteil 1x: RKF7_R RA_R r | Bischofaermel rechts 1x: KF7Br SB_Rr v
+
+F1L | Kugelfalte 1 links (A-M auf B-M) | Bischofaermel links 1x: KF1A KF1M v | Bischofaermel links 1x: KF1B KF1M r
+F2L | Kugelfalte 2 links (A-M auf B-M) | Bischofaermel links 1x: KF2A KF2M v | Bischofaermel links 1x: KF2B KF2M r
+F3L | Kugelfalte 3 links (A-M auf B-M) | Bischofaermel links 1x: KF3A KF3M v | Bischofaermel links 1x: KF3B KF3M r
+F4L | Kugelfalte 4 links (A-M auf B-M) | Bischofaermel links 1x: KF4A SPT v | Bischofaermel links 1x: KF4B SPT r
+F5L | Kugelfalte 5 links (A-M auf B-M) | Bischofaermel links 1x: KF5A KF5M v | Bischofaermel links 1x: KF5B KF5M r
+F6L | Kugelfalte 6 links (A-M auf B-M) | Bischofaermel links 1x: KF6A KF6M v | Bischofaermel links 1x: KF6B KF6M r
+F7L | Kugelfalte 7 links (A-M auf B-M) | Bischofaermel links 1x: KF7A KF7M v | Bischofaermel links 1x: KF7B KF7M r
+F1R | Kugelfalte 1 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF1Ar KF1Mr v | Bischofaermel rechts 1x: KF1Br KF1Mr r
+F2R | Kugelfalte 2 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF2Ar KF2Mr v | Bischofaermel rechts 1x: KF2Br KF2Mr r
+F3R | Kugelfalte 3 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF3Ar KF3Mr v | Bischofaermel rechts 1x: KF3Br KF3Mr r
+F4R | Kugelfalte 4 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF4Ar SPTr v | Bischofaermel rechts 1x: KF4Br SPTr r
+F5R | Kugelfalte 5 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF5Ar KF5Mr v | Bischofaermel rechts 1x: KF5Br KF5Mr r
+F6R | Kugelfalte 6 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF6Ar KF6Mr v | Bischofaermel rechts 1x: KF6Br KF6Mr r
+F7R | Kugelfalte 7 rechts (A-M auf B-M) | Bischofaermel rechts 1x: KF7Ar KF7Mr v | Bischofaermel rechts 1x: KF7Br KF7Mr r
+
+N06La | Manschette an Aermelsaum links, Stueck 1 | Bischofaermel links 1x: SH_L KS1A r | Manschette links 1x: M0 MF1 v
+N06Lb | Manschette an Aermelsaum links, Stueck 2 | Bischofaermel links 1x: KS1B KS2A r | Manschette links 1x: MF1 MF2 v
+N06Lc | Manschette an Aermelsaum links, Stueck 3 | Bischofaermel links 1x: KS2B KS3A r | Manschette links 1x: MF2 MF3 v
+N06Ld | Manschette an Aermelsaum links, Stueck 4 | Bischofaermel links 1x: KS3B FSM r | Manschette links 1x: MF3 MM v
+N06Le | Manschette an Aermelsaum links, Stueck 5 | Bischofaermel links 1x: FSM KS4A r | Manschette links 1x: MM MF4 v
+N06Lf | Manschette an Aermelsaum links, Stueck 6 | Bischofaermel links 1x: KS4B KS5A r | Manschette links 1x: MF4 MF5 v
+N06Lg | Manschette an Aermelsaum links, Stueck 7 | Bischofaermel links 1x: KS5B KS6A r | Manschette links 1x: MF5 MF6 v
+N06Lh | Manschette an Aermelsaum links, Stueck 8 | Bischofaermel links 1x: KS6B SH_R r | Manschette links 1x: MF6 M1 v
+S1L | Saumfalte 1 links (B-M auf A-M) | Bischofaermel links 1x: KS1B KS1M v | Bischofaermel links 1x: KS1A KS1M r
+S2L | Saumfalte 2 links (B-M auf A-M) | Bischofaermel links 1x: KS2B KS2M v | Bischofaermel links 1x: KS2A KS2M r
+S3L | Saumfalte 3 links (B-M auf A-M) | Bischofaermel links 1x: KS3B KS3M v | Bischofaermel links 1x: KS3A KS3M r
+S4L | Saumfalte 4 links (B-M auf A-M) | Bischofaermel links 1x: KS4B KS4M v | Bischofaermel links 1x: KS4A KS4M r
+S5L | Saumfalte 5 links (B-M auf A-M) | Bischofaermel links 1x: KS5B KS5M v | Bischofaermel links 1x: KS5A KS5M r
+S6L | Saumfalte 6 links (B-M auf A-M) | Bischofaermel links 1x: KS6B KS6M v | Bischofaermel links 1x: KS6A KS6M r
+
+N06Ra | Manschette an Aermelsaum rechts, Stueck 1 | Bischofaermel rechts 1x: SH_Lr KS1Ar r | Manschette rechts 1x: M0r MF1r v
+N06Rb | Manschette an Aermelsaum rechts, Stueck 2 | Bischofaermel rechts 1x: KS1Br KS2Ar r | Manschette rechts 1x: MF1r MF2r v
+N06Rc | Manschette an Aermelsaum rechts, Stueck 3 | Bischofaermel rechts 1x: KS2Br KS3Ar r | Manschette rechts 1x: MF2r MF3r v
+N06Rd | Manschette an Aermelsaum rechts, Stueck 4 | Bischofaermel rechts 1x: KS3Br FSMr r | Manschette rechts 1x: MF3r MMr v
+N06Re | Manschette an Aermelsaum rechts, Stueck 5 | Bischofaermel rechts 1x: FSMr KS4Ar r | Manschette rechts 1x: MMr MF4r v
+N06Rf | Manschette an Aermelsaum rechts, Stueck 6 | Bischofaermel rechts 1x: KS4Br KS5Ar r | Manschette rechts 1x: MF4r MF5r v
+N06Rg | Manschette an Aermelsaum rechts, Stueck 7 | Bischofaermel rechts 1x: KS5Br KS6Ar r | Manschette rechts 1x: MF5r MF6r v
+N06Rh | Manschette an Aermelsaum rechts, Stueck 8 | Bischofaermel rechts 1x: KS6Br SH_Rr r | Manschette rechts 1x: MF6r M1r v
+S1R | Saumfalte 1 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS1Br KS1Mr v | Bischofaermel rechts 1x: KS1Ar KS1Mr r
+S2R | Saumfalte 2 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS2Br KS2Mr v | Bischofaermel rechts 1x: KS2Ar KS2Mr r
+S3R | Saumfalte 3 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS3Br KS3Mr v | Bischofaermel rechts 1x: KS3Ar KS3Mr r
+S4R | Saumfalte 4 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS4Br KS4Mr v | Bischofaermel rechts 1x: KS4Ar KS4Mr r
+S5R | Saumfalte 5 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS5Br KS5Mr v | Bischofaermel rechts 1x: KS5Ar KS5Mr r
+S6R | Saumfalte 6 rechts (B-M auf A-M) | Bischofaermel rechts 1x: KS6Br KS6Mr v | Bischofaermel rechts 1x: KS6Ar KS6Mr r
+

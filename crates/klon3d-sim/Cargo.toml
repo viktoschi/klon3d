@@ -1,0 +1,14 @@
+[package]
+name = "klon3d-sim"
+description = "XPBD-Solver: CPU-Referenz, GPU-tauglich angelegt (ADR-018)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+klon3d-pattern = { path = "../klon3d-pattern" }
+klon3d-mesh = { path = "../klon3d-mesh" }
+
+[dev-dependencies]
+klon3d-koerper = { path = "../klon3d-koerper" }

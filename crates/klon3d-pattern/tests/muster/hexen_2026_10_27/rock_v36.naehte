@@ -1,0 +1,15 @@
+# Nahtliste zu rock_v36.sm2d (Rock_2Schlitze_v36), klon3d Stufe 4c, Pruefmuster fuer die Allgemeinheit (Befund 100)
+# Gelesen aus den Kanten (klon3d naehte --kanten). Vordere und hintere Mitte sind bis KN (Knie) genaeht, darunter
+# ueberlappen die Bahnen als Schlitz (obere/untere Lage) und bleiben frei. Der Bund (1 mm, ganzer Umfang) ist hinten
+# geschlossen: im Muster ueberlappen seine Enden je 1 cm (B_X); hier sind die beiden Endkanten aufeinander genaeht,
+# der Bund ist dadurch 2 cm weiter (68,7 statt 66,7 cm). Nicht in der Liste: Schlitzblenden, Verstaerkungen,
+# Querriegel (aufgeklebt). Frei: Bundoberkante, Saum, Schlitze.
+#
+# Kennung | Bezeichnung | Seite A | Seite B
+
+R01R | Seitennaht rechts (Taille -> Saum) | 2 VORNE RECHTS - obere Lage an CF: TK_VR HL1_transp v | 4 HINTEN RECHTS - obere Lage an CB: TK_HR HL1_opak r
+R01L | Seitennaht links (Taille -> Saum) | 3 VORNE LINKS - untere Lage an CF: TK_VL HR1_transp r | 5 HINTEN LINKS - untere Lage an CB: TK_HL HR1_opak v
+R02 | Vordere Mitte bis zum Schlitz (Taille -> Knie) | 2 VORNE RECHTS - obere Lage an CF: T0_CF KN_CF r | 3 VORNE LINKS - untere Lage an CF: T0_CF KN_CF v
+R03 | Hintere Mitte bis zum Schlitz (Taille -> Knie) | 4 HINTEN RECHTS - obere Lage an CB: TL2_CB KN_CBL v | 5 HINTEN LINKS - untere Lage an CB: TR2_CB KN_CBR r
+R04 | Bund an Rock (hinten links -> vorn -> hinten rechts) | 1 BUND - 1 mm einlagig, ganzer Umfang, Naht hinten: B_CB_links B_CB_rechts v | 5 HINTEN LINKS - untere Lage an CB: TR2_CB TK_HL v + 3 VORNE LINKS - untere Lage an CF: TK_VL T0_CF v + 2 VORNE RECHTS - obere Lage an CF: T0_CF TK_VR v + 4 HINTEN RECHTS - obere Lage an CB: TK_HR TL2_CB v
+R05 | Bund hinten geschlossen | 1 BUND - 1 mm einlagig, ganzer Umfang, Naht hinten: B_X_Ende_o B_X_Ende_u v | 1 BUND - 1 mm einlagig, ganzer Umfang, Naht hinten: B_X_Anf_o B_X_Anf_u r
