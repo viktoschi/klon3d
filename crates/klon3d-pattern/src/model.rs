@@ -469,6 +469,56 @@ pub struct Piece {
     /// Benutzerdefinierte Nahtzugabe.
     #[serde(rename = "CSA", default)]
     pub csa: Option<CustomSeamAllowance>,
+    /// The grainline (`<grainline>`) — raw attributes, evaluated by
+    /// [`crate::fadenlauf`]. `Some` whenever the element exists on the piece,
+    /// even with `visible="false"`.
+    #[serde(rename = "grainline", default)]
+    pub grainline: Option<Grainline>,
+}
+
+// ────────────────────────────────────────────────────────── Grainline ──
+
+/// The raw attributes of a piece's `<grainline>` element, taken over verbatim.
+///
+/// Nothing is evaluated here: `rotation`/`length`/`arrowLength` are formulas in
+/// the pattern unit, the anchors name construction points, and `mx`/`my` are
+/// screen pixels. See [`crate::fadenlauf`] for the meaning of each attribute.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Grainline {
+    /// `true`/`1` — Seamly2D only draws the grainline then; missing counts as
+    /// `false` (Seamly2D's default).
+    #[serde(rename = "@visible", default)]
+    pub visible: Option<String>,
+    /// `0` arrowheads at both ends, `1` only at the top, `2` only at the
+    /// bottom. Purely a drawing property; the axis is the same.
+    #[serde(rename = "@arrows", default)]
+    pub arrows: Option<String>,
+    /// Axis rotation in degrees as a formula; fallback `90`.
+    #[serde(rename = "@rotation", default)]
+    pub rotation: Option<String>,
+    /// Axis length as a formula in the pattern unit; fallback `1`.
+    #[serde(rename = "@length", default)]
+    pub length: Option<String>,
+    /// Arrowhead length as a formula in the pattern unit; fallback `0.5`.
+    #[serde(rename = "@arrowLength", default)]
+    pub arrow_length: Option<String>,
+    /// Axis start, x in screen pixels (96 per inch, y down) — not a formula,
+    /// a plain `xs:double`; fallback `0`.
+    #[serde(rename = "@mx", default)]
+    pub mx: Option<String>,
+    /// Axis start, y in screen pixels (96 per inch, y down); fallback `0`.
+    #[serde(rename = "@my", default)]
+    pub my: Option<String>,
+    /// Top end anchor — a modelling point id or, directly, a construction
+    /// point id; `0`/empty/unknown = no anchor.
+    #[serde(rename = "@topAnchor", default)]
+    pub top_anchor: Option<String>,
+    /// Bottom end anchor, same rules as `topAnchor`.
+    #[serde(rename = "@bottomAnchor", default)]
+    pub bottom_anchor: Option<String>,
+    /// Centre anchor, same rules as `topAnchor`.
+    #[serde(rename = "@centerAnchor", default)]
+    pub center_anchor: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
