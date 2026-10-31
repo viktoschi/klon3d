@@ -144,7 +144,7 @@ impl Default for ImplizitParameter {
     fn default() -> Self {
         ImplizitParameter {
             // CLO preset `Nonlinear.smp`: five substeps, residual 1e-5.
-            // With one substep a 5.5 % Radical band on the 2026.1 body does not
+            // With one substep a 5.5 % Radical band on the reference body does not
             // settle and sits 2…4 % off the tape-measure circumference; the
             // error falls monotonically with the number of substeps
             // (0.06 % at five).

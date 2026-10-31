@@ -1,4 +1,4 @@
-//! Shared helpers for the 2026.1 reference checks: small JSON reader and paths.
+//! Shared helpers for the reference checks: small JSON reader and paths.
 //!
 //! `serde_json` is not in the offline cache, and the reference file contains only
 //! objects, lists, numbers, strings and booleans. So a reader that can do
@@ -18,7 +18,7 @@ pub fn spez() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(r"D:\ai\rea\work\spez"))
 }
 
-/// CLO's 2026.1 `Resizing` folder, if it has the core files.
+/// CLO's `Resizing` folder of the reference installation, if it has the core files.
 pub fn ordner() -> Option<PathBuf> {
     let p = std::env::var_os("CLO_FEMALE")
         .map(PathBuf::from)

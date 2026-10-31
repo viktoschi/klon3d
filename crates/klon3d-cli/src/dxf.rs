@@ -6,8 +6,8 @@
 //! bleibt die alte Schnittkante als zweite Linie stehen, und die Klebezonen
 //! werden Innenlinien (geprüft am 19.10.2026, `work/rock_dxf/LIESMICH.md`).
 //!
-//! Diese Datei hat deshalb die Form, die CLO 5.2 über *File → Import (Add) →
-//! DXF (AAMA/ASTM)* **ohne** „Swap“ richtig liest — wie
+//! Diese Datei hat deshalb die Form, die CLO in der früheren Fassung über
+//! *File → Import (Add) → DXF (AAMA/ASTM)* **ohne** „Swap“ richtig liest — wie
 //! `Rock_v34_CLO_nahtlinie_hauptteile.dxf`, die in CLO geprüft ist:
 //!
 //! * je Teil ein `BLOCK`, Kante = Nahtlinie als geschlossene `POLYLINE` auf

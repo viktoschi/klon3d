@@ -44,20 +44,21 @@
 //! * L4 und L5 (Halsmittellinie) sind **ihr eigener** Partner.
 //!
 //! Das gilt bei **40 von 40** fremden Projekten. Es weist auch den CLO-Fehler
-//! der 2020er Fassung ab (siehe unten), und zwar ohne jede Koordinate.
+//! der älteren Fassung ab (siehe unten), und zwar ohne jede Koordinate.
 //!
 //! Dazu kommt CLOs eigene `range_list.rlist`: jede Landmarke muss in dem
 //! Segment liegen, das ihr Name nennt (Hals → 6, Schulter/Ellbogen → Arm
 //! 0/1). Auch das ist eine Nummernaussage und bei **40 von 40** erfüllt.
 //!
-//! ## Ein Fehler in CLOs 2020er Fassung, den die Prüfung findet
+//! ## Ein Fehler in CLOs älterer Fassung, den die Prüfung findet
 //!
-//! Die **2020er** `IndexSet.txt` (`CLO Standalone`) nennt für L52 den Punkt
+//! Die **ältere** `IndexSet.txt` (`CLO Standalone`) nennt für L52 den Punkt
 //! **27 644** statt 27 631. `symmetry_data.sym` sagt eindeutig
-//! `s(12 010) = 27 631` — 27 644 ist **nicht** der Spiegelpartner von L49.
-//! Nur die 2026er Fassung (`CLO Standalone OnlineAuth`) ist dort richtig. Die
-//! Prüfung weist die 2020er ab, statt mit einem falschen Ellbogen
-//! weiterzurechnen; wer mit 2020 arbeitet, setzt `CLO_FEMALE` auf 2026.
+//! `s(12 010) = 27 631` - 27 644 ist **nicht** der Spiegelpartner von L49.
+//! Nur die neuere Fassung (`CLO Standalone OnlineAuth`) ist dort richtig. Die
+//! Prüfung weist die ältere ab, statt mit einem falschen Ellbogen
+//! weiterzurechnen; wer mit der älteren arbeitet, setzt `CLO_FEMALE` auf die
+//! neuere.
 
 use crate::koerper::Anordnung;
 use crate::massband::segment;

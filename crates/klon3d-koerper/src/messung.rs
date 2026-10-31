@@ -268,8 +268,8 @@ pub(crate) fn teilweg(
 
 /// Länge als Weg für einen Slot (1.8): Wert, Ergebnislinie, Rohlinie.
 ///
-/// The entries are already finished (2026.1 puts the breast, waist and hip
-/// points onto the raw chain beforehand, `messung_2026_1.md` 4).
+/// The entries are already finished (the reference version puts the breast, waist
+/// and hip points onto the raw chain beforehand, `messung_2026_1.md` 4).
 pub(crate) fn weg(
     v: &[Punkt3],
     d: &Messdaten,

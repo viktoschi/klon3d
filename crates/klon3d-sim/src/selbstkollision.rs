@@ -1,4 +1,4 @@
-//! Selbstkollision Stoff gegen Stoff nach dem Verfahren von CLO 2026.1
+//! Selbstkollision Stoff gegen Stoff nach dem Verfahren von CLO
 //! (Befund 116, am laufenden Programm gemessen).
 //!
 //! CLO hält den Stoff in drei Stufen von sich selbst fern:

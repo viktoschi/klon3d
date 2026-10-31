@@ -1,6 +1,6 @@
-# Latex material profile for CLO 5.2 (2026-10-18)
+# Latex material profile for CLO (2026-10-18)
 
-For the cross-check in CLO Standalone 5.2.334. The values in part 2 rest on the same assumption as our own
+For the cross-check in CLO Standalone (earlier version). The values in part 2 rest on the same assumption as our own
 solver (E 1.2 MPa, density 0.95 g/cm³). They have not been measured yet. Weight and tensile stiffness of latex sheeting are not in the knowledge
 database (a search on 2026-10-18 found no matching hit). The numbers are therefore estimates.
 
@@ -19,9 +19,9 @@ database (a search on 2026-10-18 found no matching hit). The numbers are therefo
 
 For fit, the leather route does not help: leather is much stiffer than latex and barely stretches.
 
-## 1. The right way in CLO 5.2: Emulator with your own measurements
+## 1. The right way in CLO: Emulator with your own measurements
 
-CLO 5.2 has the **Emulator mode** (changelog: Emulator/Fabric Kit, page for bias values, force in kgf,
+CLO has the **Emulator mode** (changelog: Emulator/Fabric Kit, page for bias values, force in kgf,
 category "None"). The Emulator guides you through the tests and computes a zfab from them, including nonlinear
 stiffness. Instead of the expensive Fabric Kit, household tools will do. Use the latex sheet you cut from, i.e. the
 same thickness and color.
@@ -57,7 +57,7 @@ Starting fabric: `Knit_Cotton_Jersey` or `Silk_Knit_Jersey` (soft and stretchy),
 | Friction | high | latex grips the skin. With lubricant, rather lower. Compute both (as in the solver) |
 | Shrinkage | 100% (off) | the reduction is already built into the pattern |
 
-How CLO 5.2's slider values convert to N/m is not publicly documented. So use these values only as a
+How CLO's slider values convert to N/m is not publicly documented. So use these values only as a
 starting point and tune them in CLO against the bending test and a hanging strip (strip 5 × 20 cm,
 fixed at one end, pull with 0.86 kgf → it should get 50% longer). It only becomes reliable with part 1.
 

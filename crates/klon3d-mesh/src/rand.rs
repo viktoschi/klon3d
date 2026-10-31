@@ -11,7 +11,7 @@
 //!
 //! ## Nähte
 //!
-//! CLO 2026.1 ordnet entlang einer Naht gleiche **Längenanteile** einander zu
+//! CLO ordnet entlang einer Naht gleiche **Längenanteile** einander zu
 //! und teilt beide Seiten an einer gemeinsamen Menge von Teilungsstellen
 //! (Spezifikation `naehte_2026_1.md` §4.1, §4.2); im Netz bekommen alle
 //! zusammengenähten Randsegmente gleich viele Randpunkte, und wird eines

@@ -1,4 +1,4 @@
-//! The 2026.1 form step against CLO: regression and first form step.
+//! The reference form step against CLO: regression and first form step.
 //!
 //! Reference values: `work/spez/pruefwerte_2026_1.json` - `regression`
 //! (sample points of the matrix `M`) and `erste_formung_base` (`f_0`, `f_2`,
@@ -6,12 +6,12 @@
 //! `formung_2026_1.md` 15: 10⁻⁵ cm for the first form step, 2 · 10⁻⁶ in
 //! feature space.
 //!
-//! Without CLO's 2026.1 folder or without the reference file, the test is skipped.
+//! Without CLO's reference folder or without the reference file, the test is skipped.
 
 mod common;
 
 use common::json_mini::{listen, ordner, pruef};
-use klon3d_koerper::kette2026::{Basis, Pca, NP};
+use klon3d_koerper::kette_referenz::{Basis, Pca, NP};
 
 /// The form matrix matches CLO's samples (regression, section 6).
 #[test]

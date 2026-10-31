@@ -2,10 +2,11 @@
 
 Decision of 2026-10-18: **entirely in Rust**, without Blender at runtime.
 
-**Status: 2026-10-31.** Stages 0 and 1 are done, stage 2 except for the
-silhouette check (finding 24), stage 6 partly brought forward. The body and its
-67 measurements now come from the **2026.1** resizing folder (finding 64); the
-5.2 chain is kept as a backup for old folders and the Newton fit remains the
+**Status: 2026-10-31.** Stages 0 and 1 are done, stage 2 done — including the
+silhouette check (finding 24, `klon3d-koerper/src/silhouette.rs`) — stage 6
+partly brought forward. The body and its
+67 measurements now come from the **reference** resizing folder (finding 64); the
+older chain is kept as a backup for old folders and the Newton fit remains the
 last fallback. In stage 3,
 boundary edges and seam pairs are done (finding 32), as are the mesh and seam subdivision
 (`klon3d-mesh`, finding 33); both acceptance tests on Bluse3 v2 have passed. From stage 4 on,
@@ -25,14 +26,15 @@ Since 2026-10-31 the placement puts the collar on the **slanted** neck seam
 the front to 1.3750 m at the back, so height and radius are taken per
 circumference angle from the four neck landmarks. Before, 16 collar points sat
 inside the skin, the deepest 5.68 mm below it at the back; now none do, and the
-deepest sits 19.81 mm above the skin (2026.1), 21.71 mm (5.2), in 4 of 4 cases.
+deepest sits 19.81 mm above the skin (reference folder), 21.71 mm (older
+folder), in 4 of 4 cases.
 
 ## Starting point — what already exists
 
 | Exists | Where | Meaning for this plan |
 |---|---|---|
-| CLO base mesh (2026.1), 47,650 vertices | `C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female\BaseMesh.obj` | cm, body 164.15 cm tall, 76,298 triangles (group `body` 62,658, model 40,465 points) — **the basis** (finding 64; the 5.2 mesh is only a backup) |
-| CLO shaping data (2026.1) | there: `FeatureData.bd`, `ReducedVertexData.bd`, `PCA_weight.bd`, `..\Detail_*.txt` | finding 64: shaping matrices computed by regression at load time (PCA); specification `spez/formung_2026_1.md`. The 5.2 fields `ConvertingMat_*.bd` (finding 18) are only a backup |
+| CLO base mesh (reference folder), 47,650 vertices | `C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female\BaseMesh.obj` | cm, body 164.15 cm tall, 76,298 triangles (group `body` 62,658, model 40,465 points) - **the basis** (finding 64; the older mesh is only a backup) |
+| CLO shaping data (reference folder) | there: `FeatureData.bd`, `ReducedVertexData.bd`, `PCA_weight.bd`, `..\Detail_*.txt` | finding 64: shaping matrices computed by regression at load time (PCA); specification `spez/formung_2026_1.md`. The older fields `ConvertingMat_*.bd` (finding 18) are only a backup |
 | `.sm2d` calculator (Python) | `D:\ai\spacebunny\schnitt.py` | reference for the target geometry, **not** a dependency |
 | Measurement file `.smis` | `Hexenensemble...\measurements.smis` | 85 measurements, 160 cm, bust 92.67, waist 74, hip 90, HighHip 83, underbust 76; reader done (finding 24) |
 | 528 real `.sm2d` patterns | `latex_schnitte\` | test material, 528/528 readable |
@@ -99,17 +101,17 @@ piece_outline`.
 | Body base | CLO's `BaseMesh.obj`, 47,650 points, 166.62 cm | **available** |
 | Shaping | `P = base mesh + F_last + Σ F_k · c_k` from the `.bd` fields | **built in**, 5 torso measurements + 8 height fields (finding 24) |
 | 58 measurements | all of CLO's measuring methods (`messung.rs`) | **done**: 57 of 58 on the BaseMesh ≤ 5·10⁻⁷ cm, Wrist +0.035 mm (finding 31) |
-| 67 measurements (2026.1) | `messung2026.rs`: the measurement set of the 2026.1 folder, cut in `f32` (`massband::kantenschnitt_f32`, `normale_f32`) | **done**: 0.00020 / 0.00033 / 0.00014 mm on the three reference meshes (`messung2026_clo.rs`) |
+| 67 measurements (reference set) | `messung_referenz.rs`: the measurement set of the reference folder, cut in `f32` (`massband::kantenschnitt_f32`, `normale_f32`) | **done**: 0.00020 / 0.00033 / 0.00014 mm on the three reference meshes (`messung_referenz_clo.rs`) |
 | Shaping chain | BASE + DETAIL Human with calibration, symmetry, centering, `.avs`, hand correction, `.smis` mapping (`kette.rs`) | **done**: all test cases of the specification, against CLO ≤ 0.51 mm (finding 31); **wired up**: `klon3d koerper <measurements.smis> [--out]` shapes the body via `koerper.rs` (group `body` in mm with triangles, also the input for stage 4); if the chain's resizing data are missing, it falls back to `anpassen.rs` (test `koerper_weg`) |
-| Shaping chain 2026.1 | `kette2026.rs`: the folder no longer ships the finished converting fields, so the form step is computed — PCA regression over `FeatureData` / `ReducedVertexData` / `PCA_weight`, then calibration, symmetry, centring, `.avs`, hand and head post-processing (`nacharbeit2026.rs`) | **done**: regression residual 4.9·10⁻⁷, final values ≤ 0.037 mm, points ≤ 0.026 mm (`formung2026_clo.rs`, `kette2026_clo.rs`) |
-| Three paths | `koerper.rs` tries 2026.1 (`Weg::Kette`), then 5.2 for old folders (`Weg::Kette52`), then the Newton fit (`Weg::Anpassen`) | **done** (`koerper_weg.rs`): each path is checked from its own folder; a folder with only the old `Advanced` files still shapes |
-| `.smis` path and HighHip | the 2026.1 fields do not carry HighHip, so it is derived from the chain's own BASE mesh | **done** (`kette2026_smis.rs`): 5 BASE and 21 DETAIL form steps, both converge, final values within 0.1 mm and points within 0.05 mm of the reference |
+| Reference shaping chain | `kette_referenz.rs`: the folder no longer ships the finished converting fields, so the form step is computed — PCA regression over `FeatureData` / `ReducedVertexData` / `PCA_weight`, then calibration, symmetry, centring, `.avs`, hand and head post-processing (`nacharbeit_referenz.rs`) | **done**: regression residual 4.9·10⁻⁷, final values ≤ 0.037 mm, points ≤ 0.026 mm (`formung_referenz_clo.rs`, `kette_referenz_clo.rs`) |
+| Three paths | `koerper.rs` tries the reference chain (`Weg::Kette`), then the older chain for old folders (`Weg::KetteAlt`), then the Newton fit (`Weg::Anpassen`) | **done** (`koerper_weg.rs`): each path is checked from its own folder; a folder with only the old `Advanced` files still shapes |
+| `.smis` path and HighHip | the reference fields do not carry HighHip, so it is derived from the chain's own BASE mesh | **done** (`kette_referenz_smis.rs`): 5 BASE and 21 DETAIL form steps, both converge, final values within 0.1 mm and points within 0.05 mm of the reference |
 | Target person | `person.rs`: `.smis` → CLO fields, heights, measurement lines, active fields | **available** (finding 24) |
 | Measurement lines | material lines that move with the mesh (`spur.rs`) **or** fixed sections at the `.smis` target heights | **available** (findings 23/24) |
 | Reference measurements | 32 values of the `DETAIL_Advanced` stage (heights in cm, apex 119.41, waist 105.71, crotch 76.87) | **available** (finding 22) |
 | Acceptance | measured circumference hits the target value | **passed with the shaping chain** (finding 31): CLO measurement bust +0.03, underbust −0.00, waist +0.02, HighHip at CLO's position −0.01, hip −0.02; sampling waist −0.89, hip −0.01. The old route via `anpassen.rs` does not reach them with the tape measure (finding 30) |
 | Height frame | measurement heights from the floor: center the mesh before measuring (lowest point y = 0) | **available** in tape-measure mode; the contour route still cuts 1.95 cm too low (finding 30) |
-| Silhouette | self-intersection, dents on the shaped body | open |
+| Silhouette | self-intersection, dents on the shaped body | **done** (`crates/klon3d-koerper/src/silhouette.rs`): contacts are classified as crossing, overlap or touch, and a crossing is judged by its penetration width, not by its existence. Against the base mesh, which already carries contacts, the reference shaping reduces crossings 464 → 54, dents 114 → 82 and the widest crossing 1.46 → 1.18 mm; no new crossing is wider than one already present, no overlap, no dent grows. Same rules hold on the older chain. Checked by `tests/silhouette_clo.rs` |
 
 **Acceptance criterion:** circumferences on the mesh within ±1 cm of the `.smis` values
 (bust 92.67 / waist 74 / hip 90 / HighHip 83 / underbust 76). That is
@@ -140,8 +142,9 @@ template.
    wrist along (finding 24).
 5. Acceptance: bust/underbust/waist/HighHip/hip within ±1 cm, body
    not self-intersecting. **Reached** (finding 24): 14 rounds, 1.8 s,
-   error ≤ 0.006 cm. Still open: the silhouette check and the
-   crotch gap at 73 cm (open seam, stage 4).
+   error ≤ 0.006 cm. Still open: the crotch gap at 73 cm (open seam,
+   stage 4). The silhouette check is done in
+   `crates/klon3d-koerper/src/silhouette.rs`.
 
 **What finding 25 changes:** the base mesh is **open at the seams**
 (4,170 open edges, 366 components). The torso section is therefore usually
@@ -158,10 +161,10 @@ every torso height. Also, the bust lies at 120 cm, not at
 | **Boundary edges** | seam line per piece split at the point nodes, length, notches, seam allowance per edge (`kanten.rs`) | **done** (finding 32) |
 | **Seam assignment** | seam list `<pattern>.naehte` next to the pattern: sides made of whole boundary edges, 1:1 up to M:N; `klon3d naehte` checks lengths, notches, coverage (`naehte.rs`) | **done** (finding 32); **seam suggestion** `klon3d naehte --vorschlag` (finding 101): Bluse3, Bluse1, bustier and skirt edge for edge like the hand-written list, direction and mirroring from the seam graph; open: pleats (bolero), slits |
 | **Triangulation** | seam line → triangle mesh per piece, approx. 10 mm edge length: boundary split by curvature, ear clipping, Lawson, Ruppert with a minimum angle of 25°, smoothing; exact on an integer grid (`klon3d-mesh`) | **done** (finding 33) |
-| **Subdivision** | subdivide both seam partners equally by **length fraction** as in CLO 2026.1 (§4 of the specification), point nodes of both sides merged up to 2 mm; result: point pairs per sub-seam; `klon3d netz` | **done** (finding 33) |
+| **Subdivision** | subdivide both seam partners equally by **length fraction** as in CLO (§4 of the specification), point nodes of both sides merged up to 2 mm; result: point pairs per sub-seam; `klon3d netz` | **done** (finding 33) |
 | Seams | support springs between the partners, 6 mm overlap seam in the middle | flush seam with bending across the seam **done** (finding 34); the overlap seam comes with the glue zones |
 | Reduction | scale rest lengths: torso 5.5%, sleeves 1–2%, cuff 5% | **done** (finding 34): rest length × (1 − r), mass of the cut piece × (1 − r)²; if the reduction is already in the pattern (Bluse3), r = 0 |
-| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO 2026 *Gluing* (Glue Fill by outline, Glue Brush painted freely) | open |
+| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO's *Gluing* (Glue Fill by outline, Glue Brush painted freely) | open |
 
 **Acceptance criterion:** all seam pairs of equal length, deviation ≤ 0.08 cm —
 the criterion from `pruef_bluse3.py`. **Passed** (finding 32,
@@ -169,18 +172,18 @@ test `naehte::abnahme_stufe3_bluse3_v2`): 24 seam pairs, largest deviation
 N07 front upper panel seam −0.0737 cm (Seamly decomposition; with the
 drawn polyline −0.0758, as in `pruef_bluse3.py`).
 
-**The seam model per CLO 2026.1** (`spez/naehte_2026_1.md`):
+**The seam model per CLO** (`spez/naehte_2026_1.md`):
 an outline is a list of lines from segment point to segment point; a
 seam side is (shape, start and end line with fraction, direction); a seam has
 two sides of 1…n seam sides each. The side sums are compared
 (Check Sewing Length: red from 5 mm or 10%); when sewing, equal
 length fractions are matched to each other. **Notches do not occur in the seam model.**
-Auto-Sewing 2026.1 pairs via piece types and edge types on the avatar
+Auto-Sewing pairs via piece types and edge types on the avatar
 (finding 71).
 
-**5.2, backup only (finding 19):** pairing via notches as `alpha` with the
-thresholds 0.1 and 0.03 — no longer present in 2026.1
-(finding 60).
+**Older version, backup only (finding 19):** pairing via notches as `alpha`
+with the thresholds 0.1 and 0.03 - no longer present in the reference
+version (finding 60).
 
 **Acceptance of mesh and subdivision** (agreed with the user on
 2026-10-20, test `klon3d-mesh/tests/bluse3_v2.rs`): mesh boundary within 0.01 cm of
@@ -219,7 +222,7 @@ includes **motion** (stage 7), and that needs the computing power of the GPU.
 |---|---|---|
 | **4a Tube with XPBD (cross-check path)** | crate `klon3d-sim`, Rust `f64`, data as arrays (struct of arrays), constraints ordered by graph coloring, substeps. Distance constraints from the mesh edges (finding 33) with rest length × (1 − reduction); seam constraints from the point pairs, bending also across the seams; gravity, damping; collision against a cylinder with friction from the physical load; position, displacement and correction kept separate (for f32). Test case: rectangle sewn into a tube, around a cylinder; `klon3d roehre` | **done** (finding 34): both fabrics, 0/5.5/10%, hoop strain −0.06 pp (tolerance ±0.5), seam 0.0000 mm, lies against the cylinder, mesh resolution 0.05 pp; the slip test follows Coulomb to 0.05%. Condition: **softness condition** α/h² ≥ 9·(wᵢ+wⱼ) — tube 116–434 substeps per frame |
 | **4a′ Tube, implicit with CG like CLO (CPU reference, basis)** | second computation path `ImplizitCg` in `klon3d-sim`: backward Euler, matrix-free PCG with 3×3 diagonal blocks, contact filter, normal force from the system, Coulomb friction, warm start; CLO setting of 1 step per frame, 50 CG iterations, seam spring 500 N/m | **done** (finding 35): tube, both fabrics at 5.5/10%, with the same acceptance as 4a, slip test at most 1.6% off the discrete path; frictionless, the same equilibrium as XPBD; blouse 13–137 ms per frame instead of 1.2–4 s, on the GPU around 310 instead of 140,000 dispatches per frame. Limits: a stiff seam only just converges, loose pieces come to rest poorly with 50 iterations. The basis since ADR-020 |
-| **Substeps per frame** | `schritte_je_bild` in `ImplizitParameter` | **done**: default 5, matching the `Nonlinear` preset (residual 1e-5). With one substep a 5.5% Radical band on the 2026.1 body does not settle and sits 2–4% off the tape-measure circumference; the error falls monotonically with the substep count (0.06% at five) |
+| **Substeps per frame** | `schritte_je_bild` in `ImplizitParameter` | **done**: default 5, matching the `Nonlinear` preset (residual 1e-5). With one substep a 5.5% Radical band on the reference body does not settle and sits 2-4% off the tape-measure circumference; the error falls monotonically with the substep count (0.06% at five) |
 | **Body as collision body** (before 4c) | body from `klon3d koerper` as a mesh in `klon3d-sim` (`netzkoerper.rs`, `Koerper::Netz`): signed distance via the nearest point and angle-weighted pseudonormals, grid search (20 mm cells, 10 mm search depth), in the implicit step a penetration check along the path with Coulomb friction on the impact. Test cases: tube on a cylinder mesh, band around the waist, point rain | **done** (finding 94): tube on the mesh, ε within 0.002 pp of the analytic case, frictionless the same equilibrium, slip test −0.11/+0.41%; band (10 mm mesh) at rest in all four cases, edges against the tape measure in their plane: Retifist ≤ 0.25%, Radical ≤ 2.7%, no point inside the skin; point rain at 6 m/s 100/100 at the impact location (without the penetration check 10/100). Open: the Radical band in the 5 mm mesh folds and does not come to rest without self-collision; body vertex against cloth triangle; moving body |
 | **4b GPU** | the implicit step from 4a′ as a WGSL compute shader via `wgpu`, `f32` (ADR-020): forces and 3×3 Jacobian blocks per edge, seam and bending, gathered per point via neighbor lists (no atomics); matrix-free A·p, block-Jacobi preconditioner with contact filter, dot products as reductions in a fixed order, warm start; contact, normal force and friction per point; collision and self-collision via spatial hashing. To be settled with 4b (finding 35, section 5): a better preconditioner for stiffer seams and loose pieces; whether edge springs are replaced by a triangle continuum | the same equilibrium as `ImplizitCg` on the tube and on the blouse in a standing pose (define and justify the tolerance), also at body height; slip test as in finding 35; Bluse3 v2 at ≥ 30 frames per second on the RTX 3090 (goal: 50 iterations, around 310 dispatches per frame); GPU tests skip themselves without an adapter and report it |
 | **4c Placement** | place the 2D pieces around the body before sewing. CLO puts them on arrangement points on hull bodies around torso, arms and legs (finding 71, addendum); klon3d needs its own simple approach, e.g. zone and side per piece (in the seam list or a separate file) and cylinders or ellipses from the body measurements of stage 2. Then the seam constraints pull the pieces together. **Built** (`platzierung.rs`, placement file `<pattern>.lage`, `klon3d anziehen`): vertical torso prism from the convex hull of the torso points, around the arm the cross-section hull per centimeter, neck seam with height and radius per angle from the four landmarks (slanted, not a horizontal circle; finding 121); per piece: zone, reference point (also from another piece of the same block), circumferential position in degrees or cm, height at a reference height, `gespiegelt` (mirrored), `drehung` (rotation), `abstand` (offset) | all pieces of Bluse3 v2 lie around the body without penetration, the seams close. **Largely done** (findings 95, 96): 16 sewn pieces placed (12 glued-on ones are missing until glue zones exist); dressed with a limited sewing speed (0.1 m/s) and body vertex against cloth triangle during sewing, around the arm a length-preserving arm prism: no point inside the skin, every seam median < 0.8 mm, **98.6% of seam pairs ≤ 10 mm**, 18 of 24 seams fully closed (finding 95 without both: 92.4%). **Generality** (finding 98): Bluse1 v25 and bustier v1 as further test patterns, all three with the same settings — sewn while held (without gravity), cloth points pushed out of the skin beforehand, seam spring 2,000 N/m during dressing, thickness per piece (`dicke` in the placement file), then 2 s of settling and a 10 s hold phase under full gravity (ADR-023): **Bluse3 99.4%, Bluse1 99.1%, bustier 94.6%**, no piece sinks more than 0.4 mm. Finding 100: Bolero v37 96.5% (pleats as darts), skirt v36 95.1% (holds, but not fully at rest: flared panels overlap on the vertical prism); finding 101: seam list and placement **automatic** (`klon3d naehte --vorschlag`, `klon3d lage`); dressed entirely without hand-written files, all five hold (Bluse3 98.6%, Bluse1 98.0%, bustier 96.0%, bolero without sleeves 96.0%, skirt 95.7% — the skirt reacts chaotically to tenths of a millimeter in the initial placement); the placement suggestion lies 0.3–2.8 cm off the hand-made placements. Finding 102: the unrest came from truncated CG solves (50 iterations); with up to 600 iterations during dressing, a torso hull that widens under flared panels, and settling until at rest (2–20 s) before the hold phase: **Bluse3 98.9%, Bluse1 98.9%, bustier 93.6%, bolero 94.5%, skirt 99.2%** with hand-written files, all hold (±0.2 mm), the skirt is insensitive to the initial placement; computing time up to three times longer. Open: corners (sleeve hem, collar end, cup attachments), zones for legs and head, gaps in the pattern reader (`cutArc`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, curve names with an underscore) |
@@ -231,7 +234,7 @@ includes **motion** (stage 7), and that needs the computing power of the GPU.
 | Bending | very low stiffness — latex barely kinks |
 | Volume | for "body hug" (5% reduction) |
 | Body collision | cloth vertex against body triangle, Coulomb friction, penetration check within the step (finding 94); body vertex against cloth triangle as a post-correction, during dressing while sewing (finding 96) |
-| Self-collision | as in CLO 2026.1 (finding 116): proximity springs point–triangle and edge–edge up to r₁ + r₂ + 0.04 mm with r = (thickness + additional thickness 2.5 mm)/2, intersections resolved via intersection regions with a constant push, impulse with position correction to 0.1 mm; spatial hashing |
+| Self-collision | as in CLO (finding 116): proximity springs point-triangle and edge-edge up to r₁ + r₂ + 0.04 mm with r = (thickness + additional thickness 2.5 mm)/2, intersections resolved via intersection regions with a constant push, impulse with position correction to 0.1 mm; spatial hashing |
 | Air damping | per material profile |
 | Gluing | points of both layers in a glue zone rigidly coupled; the glued area bends like a plate of the total thickness |
 
@@ -259,7 +262,7 @@ testable in klon3d itself: two glued layers of `Latex_0.4mm_Radical_Rubber` agai
 one layer of `Latex_Laminat_2x0.4mm_abgeleitet` and against two loose layers —
 same shape, compared as in stage 5. Expected: glued ≈ laminate fabric,
 loose clearly softer (bending ×2 instead of ×8). Model for the user interface:
-CLO help "New in 2026.0" (Glue Fill, Glue Brush).
+CLO help "New in…" (Glue Fill, Glue Brush).
 
 ## Stage 5 — Inspection output
 
@@ -279,7 +282,7 @@ Colored vertex attributes in the viewer, also exportable.
 
 The model is <https://github.com/ZHOUCHENHAO1221/drape-delta-demo> (MIT,
 as of 2026-10-18; local clone in `downloads/drape-delta-demo`). There, the same
-garment is simulated twice in CLO 2026, once with a
+garment is simulated twice in CLO, once with a
 library fabric and once with a measured fabric, and compared point by
 point. The method is adopted, not code or data: the
 repository contains only the website, no latex fabric and no
@@ -386,7 +389,7 @@ as described in stage 5. The criterion is to be agreed with her.
 
 The user's request of 2026-10-27: CLO projects should be compatible.
 Test material: 47 `.zprj` in `downloads/clo3d-patterns` (third-party files, used only
-as data), plus our own test projects from CLO 2026.1 in which the same pattern
+as data), plus our own test projects from CLO in which the same pattern
 also exists as `.sm2d`. Format knowledge comes from the findings, `spez/`
 and `work/` (ADR-024).
 

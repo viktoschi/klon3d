@@ -1778,7 +1778,7 @@ fn schreibe_koerper_obj(
     Ok((koerper.punkte.len(), koerper.dreiecke.len()))
 }
 
-/// `klon3d zprj` - liest ein CLO-2026.1-Projekt (`.zprj`).
+/// `klon3d zprj` - liest ein CLO-Projekt (`.zprj`).
 ///
 /// Gibt ohne Optionen eine Übersicht; `--teile`, `--naehte` und `--stoffe`
 /// listen die Einzelheiten, `--netz` die 3D-Lage je Teil, und `--obj <datei>`

@@ -8,7 +8,7 @@
 //!
 //! * Seamly2D: Das Vereinigen-Werkzeug zählt als Kante das Stück zwischen
 //!   zwei aufeinanderfolgenden Punktknoten (`union_tool.cpp`, `indexD1`).
-//! * CLO 2026.1: Ein Umriss ist eine Liste von Linien von Segmentpunkt zu
+//! * CLO: Ein Umriss ist eine Liste von Linien von Segmentpunkt zu
 //!   Segmentpunkt, Kurvenpunkte liegen dazwischen
 //!   (`spez/naehte_2026_1.md`, Abschnitt 1).
 //!

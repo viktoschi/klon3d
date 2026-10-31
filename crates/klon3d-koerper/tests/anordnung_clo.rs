@@ -25,12 +25,12 @@ fn pruefprojekt() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-/// CLOs `Resizing`-Ordner: `CLO_FEMALE`, sonst die 2026er Installation, sonst
-/// die 2020er.
+/// CLOs `Resizing`-Ordner: `CLO_FEMALE`, sonst die neuere Installation, sonst
+/// die ältere.
 ///
-/// Die Reihenfolge ist keine Bequemlichkeit: die **2020er** `IndexSet.txt`
+/// Die Reihenfolge ist keine Bequemlichkeit: die **ältere** `IndexSet.txt`
 /// nennt für L52 den Punkt 27 644, der **nicht** der Spiegelpartner von L49
-/// ist (siehe `elf_und_zwanzig_hat_eine_andere_l52`). Nur die 2026er Fassung
+/// ist (siehe `elf_und_zwanzig_hat_eine_andere_l52`). Nur die neuere Fassung
 /// ist dort richtig.
 fn ordner() -> Option<PathBuf> {
     let kandidaten = [
@@ -49,11 +49,11 @@ fn ordner() -> Option<PathBuf> {
     })
 }
 
-fn ordner_2020() -> PathBuf {
+fn ordner_aelter() -> PathBuf {
     PathBuf::from(r"C:\Program Files\CLO Standalone\Preset\Avatar\Resizing\Female")
 }
 
-fn ordner_2026() -> PathBuf {
+fn ordner_neuer() -> PathBuf {
     PathBuf::from(r"C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female")
 }
 
@@ -252,9 +252,9 @@ fn anordnung_gilt_fuer_alle_fremden_projekte() {
     eprintln!("{mit} Projekte mit Körper bestanden, {ohne} ohne");
 }
 
-/// Die **2020er** `IndexSet.txt` nennt für L52 einen anderen Punkt als die
-/// 2026er: 27 644 statt 27 631. `symmetry_data.sym` sagt eindeutig, welcher
-/// der Spiegelpartner von L49 ist — die Prüfung muss die 2020er abweisen.
+/// Die **ältere** `IndexSet.txt` nennt für L52 einen anderen Punkt als die
+/// neuere: 27 644 statt 27 631. `symmetry_data.sym` sagt eindeutig, welcher
+/// der Spiegelpartner von L49 ist - die Prüfung muss die ältere abweisen.
 #[test]
 fn elf_und_zwanzig_hat_eine_andere_l52() {
     let Some(p) = pruefprojekt() else {
@@ -265,35 +265,35 @@ fn elf_und_zwanzig_hat_eine_andere_l52() {
         eprintln!("übersprungen: kein Körper");
         return;
     };
-    let (alt, neu) = (ordner_2020(), ordner_2026());
+    let (alt, neu) = (ordner_aelter(), ordner_neuer());
     if !alt.join("IndexSet.txt").is_file() || !neu.join("IndexSet.txt").is_file() {
         eprintln!("übersprungen: beide Installationen nötig");
         return;
     }
 
-    let n20 = CloNummern::aus_ordner(&alt).expect("2020er Listen");
-    let n26 = CloNummern::aus_ordner(&neu).expect("2026er Listen");
-    let l52_20 = n20.landmarke(L_ELLBOGEN[1]).expect("L52 2020");
-    let l52_26 = n26.landmarke(L_ELLBOGEN[1]).expect("L52 2026");
-    assert_ne!(l52_20, l52_26, "die beiden Stände nennen verschiedene Punkte");
+    let n_alt = CloNummern::aus_ordner(&alt).expect("ältere Listen");
+    let n_neu = CloNummern::aus_ordner(&neu).expect("neuere Listen");
+    let l52_alt = n_alt.landmarke(L_ELLBOGEN[1]).expect("L52 ältere Fassung");
+    let l52_neu = n_neu.landmarke(L_ELLBOGEN[1]).expect("L52 neuere Fassung");
+    assert_ne!(l52_alt, l52_neu, "die beiden Stände nennen verschiedene Punkte");
 
     // Die Wahrheit steht in symmetry_data.sym, nicht in IndexSet.txt.
-    let l49 = n26.landmarke(L_ELLBOGEN[0]).expect("L49");
+    let l49 = n_neu.landmarke(L_ELLBOGEN[0]).expect("L49");
     assert_eq!(
-        n26.spiegelpartner(l49),
-        Some(l52_26 as i64),
-        "der Spiegelpartner von L49 ({l49}) ist {l52_26}"
+        n_neu.spiegelpartner(l49),
+        Some(l52_neu as i64),
+        "der Spiegelpartner von L49 ({l49}) ist {l52_neu}"
     );
     assert_ne!(
-        n26.spiegelpartner(l49),
-        Some(l52_20 as i64),
-        "die 2020er Nummer ({l52_20}) ist NICHT der Spiegelpartner von L49"
+        n_neu.spiegelpartner(l49),
+        Some(l52_alt as i64),
+        "die ältere Nummer ({l52_alt}) ist NICHT der Spiegelpartner von L49"
     );
 
-    // 2026 geht durch, 2020 nicht.
-    assert!(aus_clo_koerper(&netz, &n26).is_ok(), "2026er Zuordnung muss durchgehen");
-    let r = aus_clo_koerper(&netz, &n20);
-    assert!(r.is_err(), "2020er L52 ({l52_20}) muss abgewiesen werden");
+    // Die neuere geht durch, die ältere nicht.
+    assert!(aus_clo_koerper(&netz, &n_neu).is_ok(), "neuere Zuordnung muss durchgehen");
+    let r = aus_clo_koerper(&netz, &n_alt);
+    assert!(r.is_err(), "ältere L52 ({l52_alt}) muss abgewiesen werden");
     let m = r.unwrap_err();
     assert!(m.contains("Ellbogen"), "Meldung nennt das Paar: {m}");
     assert!(m.contains("symmetry_data.sym"), "Meldung nennt die Quelle: {m}");

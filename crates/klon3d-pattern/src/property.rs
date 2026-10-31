@@ -1,6 +1,6 @@
 //! Der Property-Stream: CLOs Baumformat für Projekte, Stoffe und Mustersätze.
 //!
-//! Ein CLO-2026.1-Projekt ist ein ZIP-Archiv, in dem ein **Property-Stream**
+//! Ein CLO-Projekt ist ein ZIP-Archiv, in dem ein **Property-Stream**
 //! liegt. Dieselbe Grammatik steckt in `.zfab` (Stoff), `.smp`
 //! (Simulationseinstellungen), `.pos` (Lage), `.pac` (Mustersatz) und `.zprj`
 //! bzw. `.zpac` (Projekt) - Befunde [57] und [62].
@@ -37,7 +37,7 @@
 //!
 //! ## Geprüft
 //!
-//! An `japanese_school_uniform.zprj` (CLO 2026.1.310):
+//! An `japanese_school_uniform.zprj` (CLO):
 //!
 //! | Datei | Größe | Maps | Listen | Felder | Ende |
 //! |---|---:|---:|---:|---:|---|

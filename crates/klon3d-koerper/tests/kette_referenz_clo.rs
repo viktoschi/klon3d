@@ -1,17 +1,17 @@
-//! The full 2026.1 chain against CLO: calibration, post-processing, final values, points.
+//! The full reference chain against CLO: calibration, post-processing, final values, points.
 //!
 //! Reference values: `pruefwerte_2026_1.json` → `anwenderin_avs` (calibration of
 //! BASE and DETAIL from the user's `.avs`, with a recording from CLO as
 //! reference). Tolerances per `formung_2026_1.md` 15: 0.1 mm for the
 //! final values, 0.05 mm for the points.
 //!
-//! Without CLO's 2026.1 folder or without the reference file, the test is skipped.
+//! Without CLO's reference folder or without the reference file, the test is skipped.
 
 mod common;
 
 use common::json_mini::{codes, listen, ordner, pruef, J};
-use klon3d_koerper::kette2026::{Ende, Kette2026, Zustand, KOERPER};
-use klon3d_koerper::messung2026::ANZAHL;
+use klon3d_koerper::kette_referenz::{Ende, KetteReferenz, Zustand, KOERPER};
+use klon3d_koerper::messung_referenz::ANZAHL;
 use klon3d_koerper::Punkt3;
 
 /// The user's `.avs` input (raw values, slot order 0…57).
@@ -76,7 +76,7 @@ fn chain_avs_matches_clo() {
         eprintln!("übersprungen: CLO-Ordner oder Prüfdatei fehlt");
         return;
     };
-    let k = Kette2026::laden(&o).expect("CLO-Daten");
+    let k = KetteReferenz::laden(&o).expect("CLO-Daten");
     let c = codes(&p);
     let (liste1, liste0) = listen(&p);
     let a = p.feld("anwenderin_avs");
@@ -188,7 +188,7 @@ fn chain_avs_matches_clo() {
     }
     println!(
         "Endwerte: grösste Abweichung {maxd:.5} mm — Platz {wo} ({:?})",
-        klon3d_koerper::messung2026::NAMEN[wo]
+        klon3d_koerper::messung_referenz::NAMEN[wo]
     );
     assert!(maxd <= 0.1, "{maxd:.5} mm bei Platz {wo}");
 

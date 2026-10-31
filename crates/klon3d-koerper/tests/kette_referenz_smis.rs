@@ -1,4 +1,4 @@
-//! The full 2026.1 chain from a measurement file (`.smis`) — the entry point of
+//! The full reference chain from a measurement file (`.smis`) — the entry point of
 //! `klon3d koerper`.
 //!
 //! Reference values: `pruefwerte_2026_1.json` → `anwenderin_smis` (assignment
@@ -7,13 +7,13 @@
 //! point sample; tolerances per `formung_2026_1.md` 15.
 //!
 //! The measurement file is that of the reference sample; its values are the user's.
-//! Without CLO's 2026.1 folder or without the reference file, the test is skipped.
+//! Without CLO's reference folder or without the reference file, the test is skipped.
 
 mod common;
 
 use common::json_mini::{ordner, pruef, J};
-use klon3d_koerper::kette2026::{Ende, Kette2026, Konfiguration, KOERPER};
-use klon3d_koerper::messung2026::NAMEN;
+use klon3d_koerper::kette_referenz::{Ende, KetteReferenz, Konfiguration, KOERPER};
+use klon3d_koerper::messung_referenz::NAMEN;
 use klon3d_koerper::Punkt3;
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ fn chain_smis_matches_the_reference_values() {
         eprintln!("übersprungen: CLO-Ordner, Prüfdatei oder Maßdatei fehlt");
         return;
     };
-    let k = Kette2026::laden(&o).expect("CLO-Daten");
+    let k = KetteReferenz::laden(&o).expect("CLO-Daten");
     let konf = Konfiguration::klon3d();
     let g = k
         .aus_smis(&konf, &|n| smis.wert(n))
