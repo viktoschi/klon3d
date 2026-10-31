@@ -4,9 +4,11 @@
 use klon3d_sim::roehre::{bis_zur_ruhe, param_ruhe, Roehre};
 use klon3d_sim::{messung, CpuReferenz, ImplizitCg, ImplizitParameter, Rechenweg, RADICAL_RUBBER_04, RETIFIST_NR_040};
 
-/// Rückwärts-Euler legt in N Schritten der Länge h unter konstanter
-/// Beschleunigung a den Weg a·h²·N(N+1)/2 zurück (½·a·t² + ½·a·h·t).
-fn weg_diskret(a: f64, h: f64, t: f64) -> f64 {
+/// Backward Euler covers the distance a·h²·N(N+1)/2 in N steps of length h
+/// under constant acceleration a (½·a·t² + ½·a·h·t). `h` is the frame length;
+/// the computation uses `teilschritte` steps of length h/n.
+fn weg_diskret(a: f64, h: f64, t: f64, teilschritte: usize) -> f64 {
+    let h = h / teilschritte.max(1) as f64;
     let n = (t / h).round();
     a * h * h * n * (n + 1.0) / 2.0
 }
@@ -17,9 +19,10 @@ fn weg_diskret(a: f64, h: f64, t: f64) -> f64 {
 #[cfg_attr(debug_assertions, ignore = "nur mit --release")]
 fn rutschprobe_wie_clo_mit_50_cg() {
     let h = 1.0 / 60.0;
+    let n = ImplizitParameter::default().schritte_je_bild;
     let frei = Roehre { reduktion: 0.0, ..Roehre::default() };
     let p = frei.rutschprobe(&mut ImplizitCg::neu(ImplizitParameter::default()), 0.5).unwrap();
-    let soll = weg_diskret(9.81 * (1.0 - p.halteverhaeltnis_gemessen), h, p.sekunden);
+    let soll = weg_diskret(9.81 * (1.0 - p.halteverhaeltnis_gemessen), h, p.sekunden, n);
     assert!((p.weg_m / soll - 1.0).abs() < 0.005, "freier Fall {:.1} mm gegen {:.1} mm", p.weg_m * 1e3, soll * 1e3);
 
     let halten = Roehre::default();
@@ -29,7 +32,7 @@ fn rutschprobe_wie_clo_mit_50_cg() {
 
     let rutschen = Roehre { material: RETIFIST_NR_040, ..Roehre::default() };
     let p = rutschen.rutschprobe(&mut ImplizitCg::neu(ImplizitParameter::default()), 0.5).unwrap();
-    let soll = weg_diskret(9.81 * (1.0 - p.halteverhaeltnis_gemessen), h, p.sekunden);
+    let soll = weg_diskret(9.81 * (1.0 - p.halteverhaeltnis_gemessen), h, p.sekunden, n);
     assert!((p.weg_m / soll - 1.0).abs() < 0.02, "Retifist {:.1} mm gegen {:.1} mm", p.weg_m * 1e3, soll * 1e3);
 }
 

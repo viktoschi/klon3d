@@ -118,17 +118,17 @@ pub struct Messung {
 }
 
 /// Landmarken, die die Regeln der Wege vergleichen.
-struct Lm {
-    l5: usize,
-    l8: usize,
-    l9: usize,
-    l18: Option<usize>,
-    l19: Option<usize>,
+pub(crate) struct Lm {
+    pub(crate) l5: usize,
+    pub(crate) l8: usize,
+    pub(crate) l9: usize,
+    pub(crate) l18: Option<usize>,
+    pub(crate) l19: Option<usize>,
 }
 
 /// Ein Eintrag einer Slotliste: Punkt und, wenn es ein Netzpunkt ist,
 /// seine Nummer (für die Sonderregeln der Ebene).
-type Eintrag = (Punkt3, Option<usize>);
+pub(crate) type Eintrag = (Punkt3, Option<usize>);
 
 fn mitte(a: Punkt3, b: Punkt3) -> Punkt3 {
     [
@@ -139,14 +139,14 @@ fn mitte(a: Punkt3, b: Punkt3) -> Punkt3 {
 }
 
 /// Länge einer offenen Polylinie.
-fn polylinie(p: &[Punkt3]) -> f64 {
+pub(crate) fn polylinie(p: &[Punkt3]) -> f64 {
     p.windows(2).map(|w| abstand(w[0], w[1])).sum()
 }
 
 /// Teilweg W(Slot, modus) (1.7). Hängt an `roh` den gelaufenen Weg, an
 /// `erg` den einseitig konvexen Weg an.
 #[allow(clippy::too_many_arguments)]
-fn teilweg(
+pub(crate) fn teilweg(
     v: &[Punkt3],
     d: &Messdaten,
     e: &[Eintrag],
@@ -267,7 +267,10 @@ fn teilweg(
 }
 
 /// Länge als Weg für einen Slot (1.8): Wert, Ergebnislinie, Rohlinie.
-fn weg(
+///
+/// The entries are already finished (2026.1 puts the breast, waist and hip
+/// points onto the raw chain beforehand, `messung_2026_1.md` 4).
+pub(crate) fn weg(
     v: &[Punkt3],
     d: &Messdaten,
     e: &[Eintrag],

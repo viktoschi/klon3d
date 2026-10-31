@@ -161,6 +161,22 @@ fn richtung(grad: f64) -> [f64; 2] {
     [w.sin(), -w.cos()]
 }
 
+/// Height and radius of the neck seam at circumference angle `grad`,
+/// interpolated cyclically and linearly between the four support points. The
+/// seam is slanted: low at the front, high at the back.
+fn hals_naht_bei(naht: &[(f64, f64, f64); 4], grad: f64) -> (f64, f64) {
+    let g = grad.rem_euclid(360.0);
+    for i in 0..4 {
+        let (a, b) = (naht[i], naht[(i + 1) % 4]);
+        let ende = if i == 3 { b.0 + 360.0 } else { b.0 };
+        if g >= a.0 && g <= ende {
+            let f = if (ende - a.0).abs() < 1e-12 { 0.0 } else { (g - a.0) / (ende - a.0) };
+            return (a.2 * (1.0 - f) + b.2 * f, a.1 * (1.0 - f) + b.1 * f);
+        }
+    }
+    (naht[0].2, naht[0].1)
+}
+
 // ---------------------------------------------------------------------------
 // Hüllkörper
 // ---------------------------------------------------------------------------
@@ -230,6 +246,10 @@ pub struct Huellen {
     /// Halsmitte (x, y) und Radius.
     pub hals_mitte: [f64; 2],
     pub hals_radius: f64,
+    /// The neck seam (neck opening of the torso) as four support points
+    /// (circumference angle in degrees, distance from the axis, height in m),
+    /// sorted by angle. The seam is slanted: low at the front, high at the back.
+    pub hals_naht: [(f64, f64, f64); 4],
     pub hoehen: Hoehen,
 }
 
@@ -346,11 +366,23 @@ impl Huellen {
         let hals_mitte = [hals.iter().map(|p| p[0]).sum::<f64>() / 4.0, hals.iter().map(|p| p[1]).sum::<f64>() / 4.0];
         let hals_radius =
             hals.iter().map(|p| ((p[0] - hals_mitte[0]).powi(2) + (p[1] - hals_mitte[1]).powi(2)).sqrt()).fold(0.0, f64::max);
+        // The four neck landmarks are the neck opening: per angle (0 = front)
+        // their distance from the axis and their height. The neck is not a
+        // horizontal plane — the seam sits 59 mm lower at the front than at the
+        // back (findings/121).
+        let mut hals_naht = [(0.0, 0.0, 0.0); 4];
+        for (i, p) in hals.iter().enumerate() {
+            let (dx, dy) = (p[0] - hals_mitte[0], p[1] - hals_mitte[1]);
+            let grad = dy.atan2(dx).to_degrees() + 90.0;
+            hals_naht[i] = (grad.rem_euclid(360.0), dx.hypot(dy), p[2]);
+        }
+        hals_naht.sort_by(|a, b| a.0.total_cmp(&b.0));
         Ok(Huellen {
             rumpf: rumpf.iter().map(|&i| k.punkte[i]).collect(),
             arme: arme.map(|a| a.expect("beide Arme")),
             hals_mitte,
             hals_radius,
+            hals_naht,
             hoehen: Hoehen {
                 hals_vorn: k.hals_vorn[2],
                 hals_hinten: k.hals_hinten[2],
@@ -564,6 +596,9 @@ struct Abwicklung {
     /// Rumpf: Index des Prismas; Hals: Radius mit Abstand.
     prisma: usize,
     radius: f64,
+    /// Neck: the neck seam (angle, radius, height) — height of the piece point
+    /// on it.
+    hals_naht: [(f64, f64, f64); 4],
     /// Arm: das Armprisma mit Abstand; `um` ist die Bogenlänge des Ankers.
     armumriss: Vec<[f64; 2]>,
     dicke: Option<f64>,
@@ -644,7 +679,17 @@ impl Platzierung {
             }
             Zone::Hals => {
                 let w = a.um + e[0] / a.radius;
-                [self.hals_mitte[0] + a.radius * w.cos(), self.hals_mitte[1] + a.radius * w.sin(), a.hoch + e[1]]
+                // The seam is slanted per angle (low at the front, high at the
+                // back); every point sits vertically above its own seam point
+                // (findings/121). The anchor (`KHM`) lies on the collar's lower
+                // edge, and that edge is sewn to the neck opening along N13 —
+                // so it belongs on the seam. The height in the layout file does
+                // not apply here: the layout suggestion writes `v.y +
+                // hals_hoehe` there, a 2D pattern height; read as a 3D offset it
+                // would pull the collar below the seam again.
+                let grad = w.to_degrees() + 90.0;
+                let (z_naht, _) = hals_naht_bei(&a.hals_naht, grad);
+                [self.hals_mitte[0] + a.radius * w.cos(), self.hals_mitte[1] + a.radius * w.sin(), z_naht + e[1]]
             }
             Zone::Arm(s) => {
                 let z = &self.arme[s];
@@ -820,6 +865,7 @@ pub fn platziere_mit(netz: &Musternetz, liste: &Lageliste, huellen: &Huellen, we
             hoch,
             prisma,
             radius,
+            hals_naht: huellen.hals_naht,
             armumriss,
             dicke: a.dicke,
         });
