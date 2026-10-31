@@ -27,6 +27,7 @@
 
 pub mod formula;
 pub mod boegen;
+pub mod fadenlauf;
 pub mod geom;
 pub mod kanten;
 pub mod kontur;

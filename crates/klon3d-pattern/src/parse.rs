@@ -35,8 +35,8 @@ use std::collections::HashMap;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::model::{
-    Arc, Calculation, CsaNode, CustomSeamAllowance, DraftBlock, Increments, Increment, Line,
-    Modeling, Operation, PathPoint, Pattern, Piece, PieceNode, PieceNodes, Point, Spline,
+    Arc, Calculation, CsaNode, CustomSeamAllowance, DraftBlock, Grainline, Increments, Increment,
+    Line, Modeling, Operation, PathPoint, Pattern, Piece, PieceNode, PieceNodes, Point, Spline,
 };
 use crate::PatternError;
 
@@ -543,6 +543,23 @@ fn parse(xml: &str) -> Result<Pattern, PatternError> {
                     "node" => {
                         knoten_anhaengen(&stapel, &mut teile, &m);
                         stapel.push(Ctx::Node);
+                    }
+
+                    // The piece's grainline — self-closing, attributes only,
+                    // taken over verbatim. Outside `<pieces>` it attaches to
+                    // no piece.
+                    "grainline" => {
+                        if stapel.iter().any(|c| matches!(c, Ctx::Pieces(_))) {
+                            let Some(teil) = teile.last_mut() else { break 'start };
+                            teil.grainline = Some(from_map!(Grainline, &m,
+                                visible => "visible", arrows => "arrows",
+                                rotation => "rotation", length => "length",
+                                arrow_length => "arrowLength",
+                                mx => "mx", my => "my",
+                                top_anchor => "topAnchor",
+                                bottom_anchor => "bottomAnchor",
+                                center_anchor => "centerAnchor"));
+                        }
                     }
 
                     _ => {}
