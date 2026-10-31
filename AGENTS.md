@@ -61,7 +61,7 @@ about 1,100 places and collides with every open branch. Format only new files of
 - **No hard-wired material:** latex is one test case, woven and knitted fabrics are equal goals. Fabric values
   come from profiles ([MATERIAL.md](MATERIAL.md), `assets/stoffe/`).
 - **Nothing is pinned:** garments stay on the body through tension and friction alone.
-- **Measurements on the 2026.1 body run in `f32`** (`massband::*_f32`). That is measured and intended – do not
+- **Measurements on the reference body run in `f32`** (`massband::*_f32`). That is measured and intended – do not
   "improve" it to `f64`. The module docs explain why.
 - **`klon3d zprj` exits with 1** when a seam side points to no line of its piece. That is the acceptance
   condition, not a cosmetic issue.

@@ -1,16 +1,17 @@
-//! CLO 2026.1: displacement fields, search and post-processing.
+//! Displacement fields, search and post-processing.
 //!
-//! This is layer 2 of the reconstruction (`formung_2026_1.md` 12): the files
+//! This is layer 2 of the reference reconstruction (`formung_2026_1.md` 12): the
+//! files
 //! `displacementData*.txt`, `hand_*.txt`, `head_*.txt` and `foot.bry`, the
 //! halving search from 12.1 and the post-processing from 12.2–12.9. The
-//! calibration loop itself is in [`crate::kette2026`].
+//! calibration loop itself is in [`crate::kette_referenz`].
 //!
 //! All lengths in centimetres and in point order of the mesh
 //! (47 650 points, `BaseMesh.obj`).
 
-use crate::kette2026::{Basis, PUNKTE};
+use crate::kette_referenz::{Basis, PUNKTE};
 use crate::massband::Messdaten;
-use crate::messung2026::{Messer, ANZAHL};
+use crate::messung_referenz::{Messer, ANZAHL};
 use crate::Punkt3;
 use std::fs;
 use std::io;
@@ -379,9 +380,9 @@ pub fn nacharbeit(
 
     // 12.5 hand.
     if stufe == 3 && f21 {
-        // Hand correction by body height as in 5.2; klon3d does not need
-        // the branch (the specification names a = 140, b = 250, in 2026.1
-        // not read out).
+        // Hand correction by body height as in the older version; klon3d does
+        // not need the branch (the specification names a = 140, b = 250, in the
+        // reference version not read out).
         let h = miss(&p, d, 0);
         let t = 0.5 * klemm((h - 140.0) / (250.0 - 140.0));
         let q = add(&p, 1.0, &f.hand_min);

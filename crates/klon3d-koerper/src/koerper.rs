@@ -3,13 +3,13 @@
 //!
 //! Three paths, tried in this order ([`Weg`], `koerper_weg.rs`):
 //!
-//! 1. **2026.1 shaping chain** ([`crate::kette2026`], findings/64) — the basis:
-//!    BASE + DETAIL Human over the `.bd` fields, calibration, symmetry,
+//! 1. **Reference shaping chain** ([`crate::kette_referenz`], findings/64) — the
+//!    basis: BASE + DETAIL Human over the `.bd` fields, calibration, symmetry,
 //!    centring, `.avs`, hand and head post-processing. It also provides the 67
-//!    measurements ([`crate::messung2026`]); on the `.smis` path HighHip is
+//!    measurements ([`crate::messung_referenz`]); on the `.smis` path HighHip is
 //!    derived from the chain's own BASE mesh because the fields do not carry it.
-//! 2. **5.2 shaping chain** ([`crate::kette`], findings/31) — only for old
-//!    resizing folders when the 2026.1 data is missing.
+//! 2. **Older shaping chain** ([`crate::kette`], findings/31) — only for old
+//!    resizing folders when the reference data is missing.
 //! 3. **Newton fit** ([`crate::person`] + [`crate::anpassen`], findings/23, 24)
 //!    — last fallback; needs only `BaseMesh.obj` and the `DETAIL_Advanced`
 //!    fields.
@@ -22,12 +22,12 @@ use std::path::{Path, PathBuf};
 use crate::anpassen::anpassen;
 use crate::formung::{namen_vektor, referenz_vektor, Formung};
 use crate::kette::KOERPER;
-use crate::kette2026::{Ende, Ganze, Kette2026, Konfiguration};
-use crate::messung2026::ANZAHL;
+use crate::kette_referenz::{Ende, Ganze, KetteReferenz, Konfiguration};
+use crate::messung_referenz::ANZAHL;
 use crate::person::zielperson;
 use crate::{lies_obj, Netz, Punkt3};
 
-/// CLO's resizing folder of the default installation (2026.1).
+/// CLO's resizing folder of the default installation.
 pub const STANDARD_ORDNER: &str =
     r"C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female";
 
@@ -41,10 +41,10 @@ pub fn ordner() -> PathBuf {
 /// Which path shaped the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Weg {
-    /// 2026.1 shaping chain (`kette2026.rs`).
+    /// Reference shaping chain (`kette_referenz.rs`).
     Kette,
-    /// 5.2 shaping chain (`kette.rs`), only for old folders.
-    Kette52,
+    /// Older shaping chain (`kette.rs`), only for old folders.
+    KetteAlt,
     /// Old path, Newton fit onto the outline (`anpassen.rs`).
     Anpassen,
 }
@@ -52,8 +52,8 @@ pub enum Weg {
 impl Weg {
     pub fn name(self) -> &'static str {
         match self {
-            Weg::Kette => "Formungskette 2026.1",
-            Weg::Kette52 => "Formungskette 5.2",
+            Weg::Kette => "Formungskette (Referenz)",
+            Weg::KetteAlt => "Formungskette (alt)",
             Weg::Anpassen => "anpassen (Fallback)",
         }
     }
@@ -62,7 +62,7 @@ impl Weg {
 /// What the chain knows about the mesh: final values and target values, in cm.
 #[derive(Clone, Debug)]
 pub struct Kettenwerte {
-    /// The 60 measured final values, 67 slots (`messung2026::NAMEN`).
+    /// The 60 measured final values, 67 slots (`messung_referenz::NAMEN`).
     pub werte: [f64; ANZAHL],
     /// The input of the DETAIL stage, 67 slots (slot 7: derived HighHip).
     pub eingabe: [f64; ANZAHL],
@@ -73,7 +73,7 @@ pub struct Kettenwerte {
 }
 
 impl Kettenwerte {
-    fn aus_2026(g: &Ganze) -> Kettenwerte {
+    fn aus_referenz(g: &Ganze) -> Kettenwerte {
         Kettenwerte {
             werte: g.detail.werte,
             eingabe: g.eingabe,
@@ -109,12 +109,12 @@ pub struct Koerper {
 /// Shapes the body from SeamlyMe measurements; `wert` asks for a measurement by
 /// its name, in cm.
 ///
-/// The first path is the 2026.1 chain ([`Kette2026`]); without its files the
-/// 5.2 chain, and [`anpassen`] last. If the 2026.1 chain fails on the
+/// The first path is the reference chain ([`KetteReferenz`]); without its files
+/// the older chain, and [`anpassen`] last. If the reference chain fails on the
 /// measurements, that is an error.
 pub fn aus_smis(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koerper, String> {
     let konf = Konfiguration::klon3d();
-    match Kette2026::laden(ordner) {
+    match KetteReferenz::laden(ordner) {
         Ok(k) => {
             let e = k.aus_smis(&konf, wert)?;
             let meldungen = vec![
@@ -130,10 +130,10 @@ pub fn aus_smis(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koe
                 ),
             ];
             let netz = Netz {
-                punkte: crate::kette2026::koerper_mm(&e.detail.punkte),
+                punkte: crate::kette_referenz::koerper_mm(&e.detail.punkte),
                 dreiecke: k.basis.dreiecke.clone(),
             };
-            let kette = Some(Kettenwerte::aus_2026(&e));
+            let kette = Some(Kettenwerte::aus_referenz(&e));
             Ok(Koerper {
                 netz,
                 weg: Weg::Kette,
@@ -142,19 +142,19 @@ pub fn aus_smis(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koe
             })
         }
         Err(grund) => {
-            let mut k = match fuenf_zwei_weg(ordner, wert) {
+            let mut k = match weg_alt(ordner, wert) {
                 Ok(k) => k,
                 Err(_) => alter_weg(ordner, wert)?,
             };
             k.meldungen
-                .insert(0, format!("2026.1 nicht ladbar aus {}: {grund}", ordner.display()));
+                .insert(0, format!("Referenzkette nicht ladbar aus {}: {grund}", ordner.display()));
             Ok(k)
         }
     }
 }
 
-/// The 5.2 chain, for folders without 2026.1 data (backup).
-fn fuenf_zwei_weg(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koerper, String> {
+/// The older chain, for folders without reference data (backup).
+fn weg_alt(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koerper, String> {
     let k = crate::kette::Kette::laden(ordner).map_err(|e| e.to_string())?;
     let e = k.aus_smis(wert)?;
     let mut werte = [0.0; ANZAHL];
@@ -165,16 +165,16 @@ fn fuenf_zwei_weg(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<K
         werte,
         eingabe,
         formungen: (e.base.formungen, e.detail.formungen),
-        grund: (grund52(e.base.ende), grund52(e.detail.ende)),
+        grund: (grund_alt(e.base.ende), grund_alt(e.detail.ende)),
     };
     let meldungen = vec![
         format!(
-            "BASE (5.2): {} Formungen, {}",
+            "BASE (alt): {} Formungen, {}",
             e.base.formungen,
             e.base.ende.als_text()
         ),
         format!(
-            "DETAIL (5.2): {} Formungen, {}",
+            "DETAIL (alt): {} Formungen, {}",
             e.detail.formungen,
             e.detail.ende.als_text()
         ),
@@ -185,27 +185,27 @@ fn fuenf_zwei_weg(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<K
             punkte: crate::kette::Kette::koerper_mm(&e.detail.punkte),
             dreiecke: k.dreiecke.clone(),
         },
-        weg: Weg::Kette52,
+        weg: Weg::KetteAlt,
         meldungen,
         kette: Some(kette),
     })
 }
 
-/// Maps the 5.2 end reason onto the shared one.
-fn grund52(e: crate::kette::Ende) -> Ende {
-    use crate::kette::Ende as E52;
+/// Maps the older chain's end reason onto the shared one.
+fn grund_alt(e: crate::kette::Ende) -> Ende {
+    use crate::kette::Ende as EAlt;
     match e {
-        E52::Getroffen => Ende::Konvergenz,
-        E52::Rueckfall => Ende::Rueckfall,
-        E52::Hoechstzahl => Ende::ZuViele,
-        E52::Negativ => Ende::Negativ,
+        EAlt::Getroffen => Ende::Konvergenz,
+        EAlt::Rueckfall => Ende::Rueckfall,
+        EAlt::Hoechstzahl => Ende::ZuViele,
+        EAlt::Negativ => Ende::Negativ,
     }
 }
 
 /// Was die Platzierung (Stufe 4c) über den geformten Körper wissen muss: die
 /// Punkte von Rumpf und Armen nach CLOs Segmenten (`range_list.rlist`) und
 /// die Landmarken aus `IndexSet.txt` (mm, Rahmen von CLO). Die Zeilen sind
-/// die der 5.2-Fassung (`spez/messung.md`), passend zur
+/// die der älteren Fassung (`spez/messung.md`), passend zur
 /// Formungskette.
 #[derive(Clone, Debug)]
 pub struct Anordnung {

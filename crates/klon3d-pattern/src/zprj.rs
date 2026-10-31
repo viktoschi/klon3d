@@ -29,7 +29,7 @@
 //! In der `.pac` unter `mapPatternEditor` → `mapPatternList` → `listPattern`.
 //! Befund 62 hatte diesen Pfad an den Bibliothekssätzen als
 //! `mapPatternBlockManager`/`listPatternBlock` beschrieben; in einem echten
-//! Projekt von 2026.1 heißt er `mapPatternList`/`listPattern`. Beides kommt
+//! Projekt der Referenzfassung heißt er `mapPatternList`/`listPattern`. Beides kommt
 //! vor, deshalb sucht der Leser nach dem **Feld**, nicht nach dem Pfad.
 //!
 //! Je Teil:
@@ -618,7 +618,7 @@ impl Projekt {
 
 /// Sucht eine Liste im Baum, gleich unter welchem Pfad.
 ///
-/// Nötig, weil CLO den Mustersatz 2026.1 unter
+/// Nötig, weil CLO den Mustersatz der Referenzfassung unter
 /// `mapPatternEditor.mapPatternList.listPattern` führt, die Bibliothekssätze
 /// (Befund 62) aber unter `mapPatternBlockManager.listPatternBlock`. Der Name
 /// des Feldes ist stabil, der Pfad nicht.

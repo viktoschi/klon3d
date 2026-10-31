@@ -1,6 +1,6 @@
 //! ZIP-Archive lesen, ohne Fremdcrate.
 //!
-//! CLO 2026.1 legt jedes Projekt und jeden inneren Behälter als ZIP an
+//! CLO legt jedes Projekt und jeden inneren Behälter als ZIP an
 //! (Befund 46: `.zmdr` und `.zblc` sind "ein ZIP-Archiv in einem 16-Byte-Mantel";
 //! Befund 50 belegt die Regel für sechs Endungen). Für einen Leser genügt
 //! deshalb ein kleiner Auspacker statt einer vollen ZIP-Bibliothek:

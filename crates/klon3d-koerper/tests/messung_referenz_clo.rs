@@ -1,4 +1,4 @@
-//! The 2026.1 measurement against CLO's stored meshes.
+//! The reference measurement against CLO's stored meshes.
 //!
 //! Reference values: `pruefwerte_2026_1.json`, section `clo_netze` — per mesh the
 //! 60 measured values from CLO's store and the points of the mesh
@@ -12,9 +12,9 @@
 mod common;
 
 use common::json_mini::{ordner, pruef};
-use klon3d_koerper::kette2026::PUNKTE;
+use klon3d_koerper::kette_referenz::PUNKTE;
 use klon3d_koerper::massband::Messdaten;
-use klon3d_koerper::messung2026::{gemessen, Messer, ANZAHL, NAMEN};
+use klon3d_koerper::messung_referenz::{gemessen, Messer, ANZAHL, NAMEN};
 use klon3d_koerper::Punkt3;
 
 /// A CLO mesh from the reference file: `47 650 × 3` float32 little endian, cm.

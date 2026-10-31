@@ -5,7 +5,7 @@
 //! [`klon3d_pattern::kanten`]: jeder Punktknoten ist ein Netzpunkt, jeder
 //! Randpunkt liegt auf seiner Randkante. Für jedes Nahtpaar der Nahtliste
 //! ([`klon3d_pattern::naehte`]) bekommen beide Seiten gleich viele
-//! Randpunkte, zugeordnet nach Längenanteil wie in CLO 2026.1
+//! Randpunkte, zugeordnet nach Längenanteil wie in CLO
 //! (`spez/naehte_2026_1.md` §4). Das Ergebnis sind
 //! Punktpaare je Naht — die Eingabe für die Nahtfedern in Stufe 4.
 //!

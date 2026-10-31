@@ -1,6 +1,7 @@
-//! CLO 2026.1: the 67 measurements, with fixed points instead of candidate search.
+//! The reference measurement set: the 67 measurements, with fixed points
+//! instead of candidate search.
 //!
-//! The basis are the methods from [`crate::messung`] (5.2) and
+//! The basis are the methods from [`crate::messung`] (the older set) and
 //! [`crate::massband`]: edge intersection, 0,5-cm filter, 20-cm chain,
 //! direction of traversal, convex hull, paths, heights, straight lines, difference, sum,
 //! averaging. They apply unchanged. This module implements the changes from
@@ -12,7 +13,7 @@
 //! 2. **Bust bridge.** At the bust the hull is relieved before closing around
 //!    the points at the front between the bust points (the band
 //!    bridges the décolleté).
-//! 3. **New intersection rule** ([`kreuzung26`]): closed ring, after a
+//! 3. **New intersection rule** ([`kreuzung_referenz`]): closed ring, after a
 //!    hit the following segment is skipped, the first hit counts,
 //!    with two of them the front or back one.
 //! 4. **Projected points.** L18/L19 (and in paths L24/L26) are placed onto
@@ -28,7 +29,8 @@ use crate::massband::{abstand, huelle, segment, umfangsschnitt_f32, Messdaten, W
 use crate::messung::{weg, Eintrag, Lm};
 use crate::Punkt3;
 
-/// Number of measurements in 2026.1 (58 like 5.2 plus hand, head and seven sliders).
+/// Number of measurements in the reference set (58 like the older one plus hand,
+/// head and seven sliders).
 pub const ANZAHL: usize = 67;
 
 /// Names of the measurements in slot order (`formung_2026_1.md` 3).
@@ -117,7 +119,7 @@ pub struct Messung {
 /// centre-line point with `x = q.x` does not count twice. The result is the
 /// first hit; with at least two hits the front (larger z) resp.
 /// back (smaller z) one of the first two. Without a hit `(0, 0, 0)`.
-pub fn kreuzung26(ring: &[Punkt3], q: Punkt3, hinten: bool) -> Punkt3 {
+pub fn kreuzung_referenz(ring: &[Punkt3], q: Punkt3, hinten: bool) -> Punkt3 {
     let n = ring.len();
     if n == 0 {
         return [0.0; 3];
@@ -247,7 +249,8 @@ impl Messer {
         us(&self.l, z)
     }
 
-    /// Point of a placeholder (`i < 0`) by the 2026 rule; otherwise the zero point.
+    /// Point of a placeholder (`i < 0`) by the reference rule; otherwise the zero
+    /// point.
     fn berechnet(&self, i: i64) -> Punkt3 {
         let gleich = |z: usize| self.l.get(z).copied() == Some(i);
         let punkt = |z: usize| -> Option<Punkt3> {
@@ -258,7 +261,7 @@ impl Messer {
             // −2: waist, back
             if let (Some(q), Some(roh)) = (punkt(24), Some(&self.m[6].slots[0].roh)) {
                 if !roh.is_empty() {
-                    return kreuzung26(roh, q, true);
+                    return kreuzung_referenz(roh, q, true);
                 }
             }
         }
@@ -266,7 +269,7 @@ impl Messer {
             // −3: HighHip, back
             if let (Some(q), Some(roh)) = (punkt(26), Some(&self.m[7].slots[0].roh)) {
                 if !roh.is_empty() {
-                    return kreuzung26(roh, q, true);
+                    return kreuzung_referenz(roh, q, true);
                 }
             }
         }
@@ -274,7 +277,7 @@ impl Messer {
             // −4: LowHip, front
             if let (Some(q), Some(roh)) = (punkt(29), Some(&self.m[8].slots[0].roh)) {
                 if !roh.is_empty() {
-                    return kreuzung26(roh, q, false);
+                    return kreuzung_referenz(roh, q, false);
                 }
             }
         }
@@ -283,7 +286,7 @@ impl Messer {
             if let (Some(a), Some(b), Some(c)) = (punkt(4), punkt(12), punkt(13)) {
                 let q = [a[0], (b[1] + c[1]) * 0.5, a[2]];
                 if !self.m[34].slots[0].roh.is_empty() {
-                    return kreuzung26(&self.m[34].slots[0].roh, q, false);
+                    return kreuzung_referenz(&self.m[34].slots[0].roh, q, false);
                 }
             }
         }
@@ -292,7 +295,7 @@ impl Messer {
             if let (Some(a), Some(b), Some(c)) = (punkt(5), punkt(14), punkt(15)) {
                 let q = [a[0], (b[1] + c[1]) * 0.5, a[2]];
                 if !self.m[35].slots[0].roh.is_empty() {
-                    return kreuzung26(&self.m[35].slots[0].roh, q, true);
+                    return kreuzung_referenz(&self.m[35].slots[0].roh, q, true);
                 }
             }
         }
@@ -305,13 +308,13 @@ impl Messer {
         let q = self.v[i];
         let brust = self.netzpunkt(18) == Some(i) || self.netzpunkt(19) == Some(i);
         if brust {
-            return Some(kreuzung26(&self.m[2].slots[0].roh, q, false));
+            return Some(kreuzung_referenz(&self.m[2].slots[0].roh, q, false));
         }
         if weg_modus && self.netzpunkt(24) == Some(i) {
-            return Some(kreuzung26(&self.m[6].slots[0].roh, q, false));
+            return Some(kreuzung_referenz(&self.m[6].slots[0].roh, q, false));
         }
         if weg_modus && self.netzpunkt(26) == Some(i) {
-            return Some(kreuzung26(&self.m[7].slots[0].roh, q, false));
+            return Some(kreuzung_referenz(&self.m[7].slots[0].roh, q, false));
         }
         None
     }
@@ -451,7 +454,7 @@ impl Messer {
                 let q = self
                     .netzpunkt(22)
                     .map_or([0.0; 3], |a| self.v[a]);
-                kreuzung26(&self.m[5].slots[0].roh, q, true)
+                kreuzung_referenz(&self.m[5].slots[0].roh, q, true)
             } else if l(20) == Some(i) {
                 breite = true;
                 let roh = self.m[5].slots[0].roh.clone();
@@ -463,7 +466,7 @@ impl Messer {
             } else if l(28) == Some(i) {
                 // −4: LowHip, front
                 let q = self.netzpunkt(29).map_or([0.0; 3], |a| self.v[a]);
-                kreuzung26(&self.m[8].slots[0].roh, q, false)
+                kreuzung_referenz(&self.m[8].slots[0].roh, q, false)
             } else {
                 [0.0; 3]
             };

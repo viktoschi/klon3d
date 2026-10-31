@@ -187,7 +187,7 @@ pub struct Koerperteile<'a> {
     pub punkte: &'a [[f64; 3]],
     pub dreiecke: &'a [[u32; 3]],
     /// Punkte des Rumpfs. Es zählt nur ihre größte zusammenhängende Gruppe:
-    /// CLOs Segmente (5.2) führen 8 Punkte der linken Hand als Rumpf.
+    /// CLOs Segmente (ältere Fassung) führen 8 Punkte der linken Hand als Rumpf.
     pub rumpf: &'a [usize],
     /// Punkte der Arme: links, rechts.
     pub arme: [&'a [usize]; 2],

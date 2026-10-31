@@ -15,7 +15,7 @@
 //! * [`material`] — Stoffwerte aus CLO-Profilen in SI-Einheiten;
 //! * [`messung`] — Umfang, Dehnung, Nahtspalt, Energie;
 //! * [`roehre`] — der Prüffall von Schritt 4a;
-//! * [`selbstkollision`] — Stoff gegen Stoff wie CLO 2026.1 (Befund 116):
+//! * [`selbstkollision`] - Stoff gegen Stoff wie CLO (Befund 116):
 //!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
 //! * [`vergleich`] — zwei Netze gegeneinander messen: Abstand jedes Knotens
 //!   zur Fläche des anderen, in beide Richtungen (Stufe 5);

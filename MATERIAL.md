@@ -30,7 +30,7 @@ projects of this collection it is the only real latex profile.
 ## The CLO fields and their latex values
 
 Values of the measured profile at 0.4 mm. Field names in the file as described in
-`../latex-stoffe/FORMAT.md`; units as in the Property Editor of CLO 5.2.
+`../latex-stoffe/FORMAT.md`; units as in CLO's Property Editor.
 
 | CLO field | in the file | Unit | Latex 0.4 mm | scales with | Note |
 |---|---|---|---:|---|---|
@@ -141,8 +141,9 @@ stiffness is miscalibrated.
 
 `assets/stoffe/` contains eight fabric files in CLO's `.zfab` format.
 
-All eight are **latex** (format 7 like the CLO 5.2 library, black, material type
-Plastic). Loaded in CLO 5.2.334 on 2026-10-19 and checked in the Property Editor:
+All eight are **latex** (format 7 like CLO's library, black, material type
+Plastic). Loaded in CLO (earlier version) on 2026-10-19 and checked in the
+Property Editor:
 the original, 0.25 mm, 1.0 mm, laminates 2×0.25, 0.4+0.25 and
 2×0.4. The laminates 3×0.4 and 2×1.0 have not been opened in CLO.
 

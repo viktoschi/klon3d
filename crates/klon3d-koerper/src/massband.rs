@@ -239,7 +239,7 @@ pub(crate) fn orientierung(n: Punkt3, a: Punkt3, b: Punkt3, c: Punkt3) -> bool {
 /// Rule per `messung.md` 1.2: an edge counts when `d_a · d_b ≤ 0` (it touches
 /// or crosses the plane).
 ///
-/// This is the path of the 5.2 measurement. The 2026.1 measurement uses
+/// This is the path of the older measurement. The reference measurement uses
 /// [`kantenschnitt_f32`], because it cuts the plane at nodes that define it
 /// themselves — see there.
 ///
@@ -271,7 +271,7 @@ pub(crate) fn kantenschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, 
     q
 }
 
-/// Edge cut K(P0, n, seg) (1.2) **in `f32`, the way CLO 2026.1 computes it**.
+/// Edge cut K(P0, n, seg) (1.2) **in `f32`, the way CLO computes it**.
 ///
 /// The mesh is stored as `f32`, and CLO computes it that way too: plane
 /// distance, side decision, edge direction, parameter `t` and intersection
@@ -295,7 +295,7 @@ pub(crate) fn kantenschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, 
 /// just beside the plane onto the wrong side (likewise 0.08 mm).
 ///
 /// The **plane** must be built from `f32` points as well, otherwise a residual
-/// of 0.04 mm remains ([`crate::messung2026::normale_f32`]).
+/// of 0.04 mm remains ([`crate::messung_referenz::normale_f32`]).
 pub(crate) fn kantenschnitt_f32(
     v: &[Punkt3],
     d: &Messdaten,
@@ -360,8 +360,8 @@ pub fn umfangsschnitt(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, seg: i
     umfangsschnitt_mit(v, d, p0, n, seg, kantenschnitt)
 }
 
-/// Circumference cut S(P0, n, seg) (1.3) with the edge cut of the 2026.1
-/// measurement (`f32`, like CLO) — see [`kantenschnitt_f32`].
+/// Circumference cut S(P0, n, seg) (1.3) with the edge cut of the reference
+/// measurement (`f32`, like CLO) - see [`kantenschnitt_f32`].
 pub fn umfangsschnitt_f32(v: &[Punkt3], d: &Messdaten, p0: Punkt3, n: Punkt3, seg: i32) -> Schnitt {
     umfangsschnitt_mit(v, d, p0, n, seg, kantenschnitt_f32)
 }

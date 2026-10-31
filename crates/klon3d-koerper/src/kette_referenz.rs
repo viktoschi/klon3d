@@ -1,8 +1,8 @@
-//! CLO 2026.1: the shaping matrix via PCA regression.
+//! The reference shaping: the shaping matrix via PCA regression.
 //!
-//! 5.2 ([`crate::kette`]) shapes with finished fields from
-//! `ConvertingMat_*.bd`. 2026.1 no longer has these files; it computes the
-//! form step itself (specification `work/spez/formung_2026_1.md`,
+//! The older chain ([`crate::kette`]) shapes with finished fields from
+//! `ConvertingMat_*.bd`. The reference folder no longer has these files; it
+//! computes the form step itself (specification `work/spez/formung_2026_1.md`,
 //! sections 6–8).
 //!
 //! ## The regression (section 6)
@@ -326,7 +326,8 @@ impl Basis {
 
     /// Symmetrising and centring (section 8).
     ///
-    /// 5.2 also shifted x; 2026.1 does not — the centre line lies at x = 0,
+    /// The older version also shifted x; the reference version does not - the
+    /// centre line lies at x = 0,
     /// because the centre-line points are set to x = 0. y starts from the
     /// lowest point, z around the mean over **all** points (with hair).
     pub fn symmetrisieren(&self, v: &[Punkt3]) -> Vec<Punkt3> {
@@ -388,8 +389,8 @@ pub fn koerper_mm(punkte: &[Punkt3]) -> Vec<Punkt3> {
 
 use crate::massband::Messdaten;
 
-use crate::messung2026::{gemessen, Messer, ANZAHL, TYP};
-use crate::nacharbeit2026::{Felder, Fuss};
+use crate::messung_referenz::{gemessen, Messer, ANZAHL, TYP};
+use crate::nacharbeit_referenz::{Felder, Fuss};
 
 /// CIRCUMFERENCE_HighHip and LENGTH_Waist_HighHip (`massdefinitionen.md`).
 const HUEFTE_OBEN: usize = 7;
@@ -434,9 +435,9 @@ pub struct Zustand {
     /// Step lists, index = step (0…4).
     pub listen: Vec<Vec<usize>>,
     /// Feature vector, 67 values in feature space.
-    pub f: [f64; crate::messung2026::ANZAHL],
+    pub f: [f64; crate::messung_referenz::ANZAHL],
     /// Target values of the same step, feature space.
-    pub soll: [f64; crate::messung2026::ANZAHL],
+    pub soll: [f64; crate::messung_referenz::ANZAHL],
     /// Face variant 1…10 (klon3d: 8).
     pub gesicht: usize,
     /// BASE switch (step 1).
@@ -472,8 +473,8 @@ impl Zustand {
         Zustand {
             codes: codes.to_vec(),
             listen,
-            f: [0.0; crate::messung2026::ANZAHL],
-            soll: [0.0; crate::messung2026::ANZAHL],
+            f: [0.0; crate::messung_referenz::ANZAHL],
+            soll: [0.0; crate::messung_referenz::ANZAHL],
             gesicht,
             f20,
             f21,
@@ -492,7 +493,7 @@ impl Zustand {
 }
 
 /// What the chain needs: base mesh, PCA, measurement data, post-processing fields.
-pub struct Kette2026 {
+pub struct KetteReferenz {
     pub pca: Pca,
     pub basis: Basis,
     pub messdaten: Messdaten,
@@ -500,10 +501,10 @@ pub struct Kette2026 {
     pub fuss: Fuss,
 }
 
-impl Kette2026 {
+impl KetteReferenz {
     /// Loads everything from CLO's resizing folder.
-    pub fn laden(ordner: &Path) -> io::Result<Kette2026> {
-        Ok(Kette2026 {
+    pub fn laden(ordner: &Path) -> io::Result<KetteReferenz> {
+        Ok(KetteReferenz {
             pca: Pca::laden(ordner)?,
             basis: Basis::laden(ordner)?,
             messdaten: Messdaten::laden(ordner)?,
@@ -558,7 +559,7 @@ impl Kette2026 {
             let start = v;
             let bmax = &self.felder.bmax;
             let bmin = &self.felder.bmin;
-            let (v, _, _) = crate::nacharbeit2026::suche(
+            let (v, _, _) = crate::nacharbeit_referenz::suche(
                 |t| {
                     let (d, feld) = if t >= 0.5 {
                         (2.0 * (t - 0.5), bmax)
@@ -566,9 +567,9 @@ impl Kette2026 {
                         (2.0 * (0.5 - t), bmin)
                     };
                     self.basis
-                        .symmetrisieren(&crate::nacharbeit2026::add(&start, d, feld))
+                        .symmetrisieren(&crate::nacharbeit_referenz::add(&start, d, feld))
                 },
-                |v| crate::nacharbeit2026::miss(v, &self.messdaten, 2),
+                |v| crate::nacharbeit_referenz::miss(v, &self.messdaten, 2),
                 ziel,
                 0.2,
                 0.01,
@@ -682,7 +683,7 @@ impl Kette2026 {
 
         // Always: f ← soll, post-processing with these target values.
         z.f = z.soll;
-        v = crate::nacharbeit2026::nacharbeit(
+        v = crate::nacharbeit_referenz::nacharbeit(
             &v,
             &z.codes,
             &z.soll,
@@ -856,7 +857,7 @@ impl Konfiguration {
     }
 }
 
-impl Kette2026 {
+impl KetteReferenz {
     /// The whole chain as CLO does on load (section 13).
     ///
     /// `nach_base` may change the input after the BASE step (klon3d derives
