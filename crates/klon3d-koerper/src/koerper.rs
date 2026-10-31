@@ -1,25 +1,35 @@
-//! Der Körper der Anwenderin aus ihrer Maßdatei: Eingang von `klon3d.exe`
-//! und später der Simulation.
+//! The user's body from her measurement file: entry point of `klon3d.exe` and
+//! later of the simulation.
 //!
-//! Erster Weg ist die Formungskette nach CLO ([`crate::kette`], Befund 31).
-//! Fehlen im Resizing-Ordner Daten der Kette (Human-Liste, Messdaten,
-//! Symmetrie, Hand), formt der alte Weg über [`crate::person`] und
-//! [`crate::anpassen`] (Befunde 23, 24) mit der Schnittkontur. Er braucht nur
-//! `BaseMesh.obj` und die Felder von `DETAIL_Advanced`. Ausgegeben wird in
-//! beiden Fällen die Gruppe `body` (Punkte 0 … 31 421) in mm mit ihren
-//! Dreiecken.
+//! Three paths, tried in this order ([`Weg`], `koerper_weg.rs`):
+//!
+//! 1. **2026.1 shaping chain** ([`crate::kette2026`], findings/64) — the basis:
+//!    BASE + DETAIL Human over the `.bd` fields, calibration, symmetry,
+//!    centring, `.avs`, hand and head post-processing. It also provides the 67
+//!    measurements ([`crate::messung2026`]); on the `.smis` path HighHip is
+//!    derived from the chain's own BASE mesh because the fields do not carry it.
+//! 2. **5.2 shaping chain** ([`crate::kette`], findings/31) — only for old
+//!    resizing folders when the 2026.1 data is missing.
+//! 3. **Newton fit** ([`crate::person`] + [`crate::anpassen`], findings/23, 24)
+//!    — last fallback; needs only `BaseMesh.obj` and the `DETAIL_Advanced`
+//!    fields.
+//!
+//! In all three cases the output is the `body` group (points 0 … 31 421) in mm
+//! with its triangles.
 
 use std::path::{Path, PathBuf};
 
 use crate::anpassen::anpassen;
 use crate::formung::{namen_vektor, referenz_vektor, Formung};
-use crate::kette::{Kette, KOERPER};
+use crate::kette::KOERPER;
+use crate::kette2026::{Ende, Ganze, Kette2026, Konfiguration};
+use crate::messung2026::ANZAHL;
 use crate::person::zielperson;
 use crate::{lies_obj, Netz, Punkt3};
 
-/// CLOs Resizing-Ordner der Standardinstallation.
+/// CLO's resizing folder of the default installation (2026.1).
 pub const STANDARD_ORDNER: &str =
-    r"C:\Program Files\CLO Standalone\Preset\Avatar\Resizing\Female";
+    r"C:\Program Files\CLO Standalone OnlineAuth\Preset\Avatar\Resizing\Female";
 
 /// Resizing-Ordner: `CLO_FEMALE`, sonst [`STANDARD_ORDNER`].
 pub fn ordner() -> PathBuf {
@@ -28,21 +38,59 @@ pub fn ordner() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(STANDARD_ORDNER))
 }
 
-/// Womit der Körper geformt wurde.
+/// Which path shaped the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Weg {
-    /// Formungskette nach CLO (`kette.rs`).
+    /// 2026.1 shaping chain (`kette2026.rs`).
     Kette,
-    /// Alter Weg, Newton-Anpassung auf die Schnittkontur (`anpassen.rs`).
+    /// 5.2 shaping chain (`kette.rs`), only for old folders.
+    Kette52,
+    /// Old path, Newton fit onto the outline (`anpassen.rs`).
     Anpassen,
 }
 
 impl Weg {
     pub fn name(self) -> &'static str {
         match self {
-            Weg::Kette => "Formungskette",
+            Weg::Kette => "Formungskette 2026.1",
+            Weg::Kette52 => "Formungskette 5.2",
             Weg::Anpassen => "anpassen (Fallback)",
         }
+    }
+}
+
+/// What the chain knows about the mesh: final values and target values, in cm.
+#[derive(Clone, Debug)]
+pub struct Kettenwerte {
+    /// The 60 measured final values, 67 slots (`messung2026::NAMEN`).
+    pub werte: [f64; ANZAHL],
+    /// The input of the DETAIL stage, 67 slots (slot 7: derived HighHip).
+    pub eingabe: [f64; ANZAHL],
+    /// Form steps BASE / DETAIL.
+    pub formungen: (usize, usize),
+    /// End reason BASE / DETAIL.
+    pub grund: (Ende, Ende),
+}
+
+impl Kettenwerte {
+    fn aus_2026(g: &Ganze) -> Kettenwerte {
+        Kettenwerte {
+            werte: g.detail.werte,
+            eingabe: g.eingabe,
+            formungen: (g.base.e_folge.len(), g.detail.e_folge.len()),
+            grund: (g.base.grund, g.detail.grund),
+        }
+    }
+}
+
+/// The end reason as text.
+fn text(e: Ende) -> &'static str {
+    match e {
+        Ende::Konvergenz => "E < K·0,01",
+        Ende::Rueckfall => "Rückfall",
+        Ende::ZuViele => "zu viele Formungen",
+        Ende::Negativ => "X < 0",
+        Ende::Fehler => "Fehler",
     }
 }
 
@@ -54,49 +102,103 @@ pub struct Koerper {
     /// Was beim Formen auffiel, Zeile für Zeile (Grund des Fallbacks,
     /// Formungen, Ende-Grund).
     pub meldungen: Vec<String>,
-    /// Bei der Kette ihr Ergebnis (E-Folgen, 58 Maße).
-    pub kette: Option<crate::kette::Ergebnis>,
+    /// The chain's values, when it shaped the body.
+    pub kette: Option<Kettenwerte>,
 }
 
-/// Formt den Körper aus SeamlyMe-Maßen; `wert` fragt ein Maß nach seinem
-/// Namen ab, in cm.
+/// Shapes the body from SeamlyMe measurements; `wert` asks for a measurement by
+/// its name, in cm.
 ///
-/// Der Fallback greift nur, wenn [`Kette::laden`] scheitert. Scheitert die
-/// Kette selbst an den Maßen, ist das ein Fehler.
+/// The first path is the 2026.1 chain ([`Kette2026`]); without its files the
+/// 5.2 chain, and [`anpassen`] last. If the 2026.1 chain fails on the
+/// measurements, that is an error.
 pub fn aus_smis(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koerper, String> {
-    match Kette::laden(ordner) {
+    let konf = Konfiguration::klon3d();
+    match Kette2026::laden(ordner) {
         Ok(k) => {
-            let e = k.aus_smis(wert)?;
+            let e = k.aus_smis(&konf, wert)?;
             let meldungen = vec![
                 format!(
                     "BASE: {} Formungen, {}",
-                    e.base.formungen,
-                    e.base.ende.als_text()
+                    e.base.e_folge.len(),
+                    text(e.base.grund)
                 ),
                 format!(
                     "DETAIL: {} Formungen, {}",
-                    e.detail.formungen,
-                    e.detail.ende.als_text()
+                    e.detail.e_folge.len(),
+                    text(e.detail.grund)
                 ),
-                format!("Handanteil t = {:.4}", e.hand_t),
             ];
             let netz = Netz {
-                punkte: Kette::koerper_mm(&e.detail.punkte),
-                dreiecke: k.dreiecke.clone(),
+                punkte: crate::kette2026::koerper_mm(&e.detail.punkte),
+                dreiecke: k.basis.dreiecke.clone(),
             };
+            let kette = Some(Kettenwerte::aus_2026(&e));
             Ok(Koerper {
                 netz,
                 weg: Weg::Kette,
                 meldungen,
-                kette: Some(e),
+                kette,
             })
         }
         Err(grund) => {
-            let mut k = alter_weg(ordner, wert)?;
+            let mut k = match fuenf_zwei_weg(ordner, wert) {
+                Ok(k) => k,
+                Err(_) => alter_weg(ordner, wert)?,
+            };
             k.meldungen
-                .insert(0, format!("Formungskette nicht ladbar aus {}: {grund}", ordner.display()));
+                .insert(0, format!("2026.1 nicht ladbar aus {}: {grund}", ordner.display()));
             Ok(k)
         }
+    }
+}
+
+/// The 5.2 chain, for folders without 2026.1 data (backup).
+fn fuenf_zwei_weg(ordner: &Path, wert: &dyn Fn(&str) -> Option<f64>) -> Result<Koerper, String> {
+    let k = crate::kette::Kette::laden(ordner).map_err(|e| e.to_string())?;
+    let e = k.aus_smis(wert)?;
+    let mut werte = [0.0; ANZAHL];
+    werte[..crate::messung::ANZAHL].copy_from_slice(&e.detail.messung.werte);
+    let mut eingabe = [0.0; ANZAHL];
+    eingabe[..crate::messung::ANZAHL].copy_from_slice(&e.eingabe);
+    let kette = Kettenwerte {
+        werte,
+        eingabe,
+        formungen: (e.base.formungen, e.detail.formungen),
+        grund: (grund52(e.base.ende), grund52(e.detail.ende)),
+    };
+    let meldungen = vec![
+        format!(
+            "BASE (5.2): {} Formungen, {}",
+            e.base.formungen,
+            e.base.ende.als_text()
+        ),
+        format!(
+            "DETAIL (5.2): {} Formungen, {}",
+            e.detail.formungen,
+            e.detail.ende.als_text()
+        ),
+        format!("Handanteil t = {:.4}", e.hand_t),
+    ];
+    Ok(Koerper {
+        netz: Netz {
+            punkte: crate::kette::Kette::koerper_mm(&e.detail.punkte),
+            dreiecke: k.dreiecke.clone(),
+        },
+        weg: Weg::Kette52,
+        meldungen,
+        kette: Some(kette),
+    })
+}
+
+/// Maps the 5.2 end reason onto the shared one.
+fn grund52(e: crate::kette::Ende) -> Ende {
+    use crate::kette::Ende as E52;
+    match e {
+        E52::Getroffen => Ende::Konvergenz,
+        E52::Rueckfall => Ende::Rueckfall,
+        E52::Hoechstzahl => Ende::ZuViele,
+        E52::Negativ => Ende::Negativ,
     }
 }
 

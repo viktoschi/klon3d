@@ -26,9 +26,12 @@ pub mod anordnung_clo;
 pub mod anpassen;
 pub mod formung;
 pub mod kette;
+pub mod kette2026;
 pub mod koerper;
 pub mod massband;
 pub mod messung;
+pub mod messung2026;
+pub mod nacharbeit2026;
 pub mod person;
 pub mod spur;
 
