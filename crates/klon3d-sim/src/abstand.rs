@@ -59,50 +59,14 @@ pub struct Punkt {
 /// never inside; `0` would count rounding noise as penetration.
 pub const INNEN: f64 = -1e-4;
 
-/// Distribution of distances in mm.
+/// The summary of the distances, in mm.
 ///
+/// The struct itself is shared with the strain map and lives in
+/// [`crate::verteilung`]; it stays exported here, where it was introduced.
 /// Not [`crate::vergleich::Kennzahlen`]: that one starts at zero by nature
 /// (two meshes lying on each other) and has no minimum. Here the minimum is
 /// the value that matters — it is the one that shows penetration.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Verteilung {
-    pub anzahl: usize,
-    pub min: f64,
-    pub mittel: f64,
-    pub median: f64,
-    pub p90: f64,
-    pub p99: f64,
-    pub max: f64,
-}
-
-impl Verteilung {
-    /// Summarises single values (mm). Empty input gives all zeros.
-    pub fn aus(mut d: Vec<f64>) -> Verteilung {
-        if d.is_empty() {
-            return Verteilung {
-                anzahl: 0,
-                min: 0.0,
-                mittel: 0.0,
-                median: 0.0,
-                p90: 0.0,
-                p99: 0.0,
-                max: 0.0,
-            };
-        }
-        d.sort_by(f64::total_cmp);
-        let n = d.len();
-        let q = |f: f64| d[((n as f64 * f) as usize).min(n - 1)];
-        Verteilung {
-            anzahl: n,
-            min: d[0],
-            mittel: d.iter().sum::<f64>() / n as f64,
-            median: q(0.5),
-            p90: q(0.9),
-            p99: q(0.99),
-            max: d[n - 1],
-        }
-    }
-}
+pub use crate::verteilung::Verteilung;
 
 /// Summary of one pattern piece.
 #[derive(Debug, Clone, PartialEq)]
