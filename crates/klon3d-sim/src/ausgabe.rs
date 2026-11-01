@@ -1,4 +1,5 @@
-//! Ausgabe: Endzustand als OBJ (mm) und Dehnung je Dreieck als CSV.
+//! Ausgabe: Endzustand als OBJ (mm), als OBJ mit farbigen Eckpunkten und
+//! Dehnung je Dreieck als CSV.
 
 use std::fmt::Write;
 
@@ -10,6 +11,38 @@ pub fn obj(s: &Szene) -> String {
     let mut out = String::from("# klon3d-sim, Einheit mm\n");
     for p in &s.x {
         let _ = writeln!(out, "v {:.4} {:.4} {:.4}", p[0] * 1e3, p[1] * 1e3, p[2] * 1e3);
+    }
+    for t in &s.teile {
+        let _ = writeln!(out, "g {}", t.name.replace(' ', "_"));
+        for d in &s.dreiecke[t.dreiecke.clone()] {
+            let _ = writeln!(out, "f {} {} {}", d[0] + 1, d[1] + 1, d[2] + 1);
+        }
+    }
+    out
+}
+
+/// OBJ in mm with a colour attribute on every vertex: `v x y z r g b`.
+///
+/// `farbe(i)` gives the RGB for scene point `i`. Coordinates, groups and faces
+/// are exactly those of [`obj`], so a coloured file and the plain one describe
+/// the same geometry — the colours are an extra pair of columns and nothing
+/// else. Red, green and blue are 0…255, which every viewer that reads vertex
+/// colours understands (and which is what `v x y z r g b` means in the
+/// extension, as opposed to the 0…1 of `vertex colors` in some writers).
+pub fn obj_farbig(s: &Szene, farbe: impl Fn(usize) -> [u8; 3]) -> String {
+    let mut out = String::from("# klon3d-sim, Einheit mm, Farbe je Eckpunkt 0..255\n");
+    for (i, p) in s.x.iter().enumerate() {
+        let f = farbe(i);
+        let _ = writeln!(
+            out,
+            "v {:.4} {:.4} {:.4} {} {} {}",
+            p[0] * 1e3,
+            p[1] * 1e3,
+            p[2] * 1e3,
+            f[0],
+            f[1],
+            f[2]
+        );
     }
     for t in &s.teile {
         let _ = writeln!(out, "g {}", t.name.replace(' ', "_"));

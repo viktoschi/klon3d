@@ -163,6 +163,36 @@ impl Karte {
         }
     }
 
+    /// Larger principal strain per **point** in percent (rest frame), for
+    /// vertex colours.
+    ///
+    /// The map is measured per face, but a colour attribute in an OBJ belongs
+    /// to a vertex. A point takes the area-weighted mean of the faces around
+    /// it: the area is what says how much material the face stands for, so a
+    /// large neighbouring face pulls harder than a sliver. A point with no
+    /// face at all stays at 0 % — it carries no material and no strain.
+    pub fn je_punkt(&self, s: &Szene) -> Vec<f64> {
+        let mut summe = vec![0.0; s.x.len()];
+        let mut gewicht = vec![0.0; s.x.len()];
+        for (k, d) in s.dreiecke.iter().enumerate() {
+            let a = self.je_flaeche[k].ruheflaeche_m2;
+            if !(a > 0.0) {
+                continue;
+            }
+            let e = self.je_flaeche[k].groesste * 100.0;
+            for &i in d {
+                let i = i as usize;
+                summe[i] += e * a;
+                gewicht[i] += a;
+            }
+        }
+        summe
+            .iter()
+            .zip(&gewicht)
+            .map(|(v, w)| if *w > 0.0 { v / w } else { 0.0 })
+            .collect()
+    }
+
     /// Summary over all faces (percent, rest frame).
     pub fn gesamt(&self) -> Verteilung {
         Verteilung::aus(self.je_flaeche.iter().map(|f| f.groesste * 100.0).collect())

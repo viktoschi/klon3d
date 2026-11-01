@@ -306,7 +306,13 @@ This is the actual purpose, not the display:
 | Stress map | where the material pulls |
 | Comparison map | distance between two runs: klon3d against CLO, fabric A against fabric B |
 
-Colored vertex attributes in the viewer, also exportable.
+**Colored vertex attributes** — **done for the export** (`farbkarte`, #19): `anziehen --farben <dir>`
+writes `dehnung.obj` and `abstand.obj` with `v x y z r g b`, the same geometry as `ende.obj`. The
+scale is fixed per measure (strain 0–20 %, distance 0–30 mm) and printed with the run, so a colour in
+a picture reads back as a number and does not mean something different in the next run. A value that
+is not a number is grey, not red. On Bluse3 v2 the colour of all 5 538 points matches the scale
+applied to the numbers recomputed from `dehnung.csv` (≤ 1 channel of rounding). Still open: drawing a
+scene in `klon3d-view` — it is a 2D pattern browser and a 3D view belongs to stage 6.
 
 ### Comparing two runs (model: drape-delta-demo)
 
