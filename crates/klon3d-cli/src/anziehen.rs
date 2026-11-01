@@ -6,8 +6,9 @@
 //! Nähte mit begrenzter Geschwindigkeit schließen, dabei Körperpunkt gegen
 //! Stoffdreieck, gehalten (ohne Schwerkraft), dann ruhen mit voller
 //! Schwerkraft; die letzten 10 s der Ruhe sind die Haltephase (ADR-023).
-//! Ausgabe: Nahtabstände je Naht, tiefster Punkt, auf Wunsch `koerper.obj`,
-//! `anfang.obj`, `ende.obj` (mm) in einem Ordner.
+//! Ausgabe: Abstandskarte Stoff → Haut je Teil (Stufe 5, [`klon3d_sim::abstand`]),
+//! Nahtabstände je Naht, tiefster Punkt, auf Wunsch `koerper.obj`,
+//! `anfang.obj`, `ende.obj` (mm) und `abstand.csv` in je einem Ordner.
 //!
 //! Mit `--zprj` kommt der Körper stattdessen aus CLOs Projekt: der `body` der
 //! `.avt` (Befund 119) und die Segment- und Landmarkenlisten aus CLOs
@@ -26,13 +27,13 @@ use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
 use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
 use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
 use klon3d_sim::{
-    ausgabe, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material, Simparameter, Szene,
-    Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
+    abstand, ausgabe, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material, Simparameter,
+    Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
 };
 
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
-                      [--material radical|retifist] [--obj <ordner>] [--ordner <Resizing>] \
+                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--ordner <Resizing>] \
                       [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
@@ -54,6 +55,8 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut xpbd = false;
     let mut selbstkollision = false;
     let mut schnitte_an_naehten = false;
+    // Abstandskarte Stoff → Haut (Stufe 5): Ordner für `abstand.csv`.
+    let mut abstand_ordner: Option<PathBuf> = None;
     let (mut anfang, mut bilder, mut zeiten): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
     let mut i = 0;
     while i < args.len() {
@@ -101,6 +104,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "--lage" => lage = Some(PathBuf::from(w)),
             "--gegen-lage" => gegen_lage = Some(PathBuf::from(w)),
             "--obj" => obj = Some(PathBuf::from(w)),
+            "--abstand" => abstand_ordner = Some(PathBuf::from(w)),
             "--ordner" => resizing = PathBuf::from(w),
             "--naehbilder" => match w.parse() {
                 Ok(n) => ablauf.naehbilder = n,
@@ -354,8 +358,23 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         s.x = x;
         println!("  Anfangslage  {}", a.display());
     }
-    let tiefster = |s: &Szene| s.x.iter().map(|&q| koerper.naechster_alle(q).abstand).fold(f64::INFINITY, f64::min);
-    println!("  Anfang       {} Punkte, tiefster Punkt {:+.1} mm (Kollider findet bis {:.0} mm)", s.x.len(), tiefster(&s) * 1e3, SUCHTIEFE * 1e3);
+    // Abstandskarte Stoff → Haut (Stufe 5): einmal rechnen, dann Anfangslage
+    // und Endzustand daraus. Der tiefste Punkt kommt aus derselben Karte statt
+    // aus einer eigenen Suche je Punkt.
+    let karte_anfang = abstand::Karte::messe(&s);
+    let tiefster = |k: &Option<abstand::Karte>| {
+        k.as_ref().and_then(|k| k.tiefster()).map_or(f64::INFINITY, |(d, _)| d)
+    };
+    println!(
+        "  Anfang       {} Punkte, tiefster Punkt {:+.1} mm{}",
+        s.x.len(),
+        tiefster(&karte_anfang) * 1e3,
+        if karte_anfang.is_some() { String::new() } else { format!(" (Kollider findet bis {:.0} mm)", SUCHTIEFE * 1e3) }
+    );
+    if let Some(k) = &karte_anfang {
+        println!("  Abstand zur Haut, Anfangslage:");
+        abstand_tabelle(k);
+    }
     // Klebezonen aus der Lagedatei (`klebt <Teil>`): Die Bindung entsteht dort,
     // wo die Teile tatsächlich liegen; ohne `klebt` entsteht keine Feder und
     // jedes bestehende Muster rechnet unverändert.
@@ -455,10 +474,13 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             return fehler(format!("{}: {e}", z.display()));
         }
     }
+    // Abstandskarte Stoff → Haut (Stufe 5): der eigentliche Zweck dieser Stufe.
+    // Einmal am Endzustand gerechnet, daraus Tabelle, tiefster Punkt und CSV.
+    let karte_ende = abstand::Karte::messe(&s);
     println!(
         "  Ende         mittlere Geschwindigkeit {:.4} m/s, tiefster Punkt {:+.2} mm",
         messung::mittlere_geschwindigkeit(&s),
-        tiefster(&s) * 1e3
+        tiefster(&karte_ende) * 1e3
     );
     if messung::mittlere_geschwindigkeit(&s) > 0.01 {
         // Nicht in Ruhe: wo der Stoff noch läuft (schnellstes Teil, schnellster Punkt).
@@ -521,6 +543,29 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             }
         }
     }
+    // Abstandskarte am Endzustand: der eigentliche Zweck der Stufe 5. Sie
+    // erscheint auch ohne `--obj`, weil sie zum Lauf gehört und nicht zur
+    // Ausgabe in Dateien.
+    if let Some(k) = &karte_ende {
+        println!();
+        println!("  Abstand zur Haut, Endzustand:");
+        abstand_tabelle(k);
+        if let Some((d, i)) = k.tiefster() {
+            let t = s.teile.iter().find(|t| t.punkte.contains(&i)).map_or("?", |t| t.name.as_str());
+            println!("  tiefster Punkt {i} ({t}): {:+.1} mm", d * 1e3);
+        }
+    }
+    if let Some(o) = &abstand_ordner {
+        // Ohne Körper gibt es keine Karte — dann wäre eine leere Datei eine
+        // Lüge, also ein Fehler statt einer stillen Null.
+        let Some(k) = &karte_ende else {
+            return fehler("--abstand: die Szene hat keinen Körper, es gibt keine Abstandskarte");
+        };
+        if let Err(e) = std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("abstand.csv"), k.csv(&s))) {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        println!("  geschrieben  {} (abstand.csv: Punkt, Teil, Lage in cm, Abstand in mm, Normale)", o.display());
+    }
     if let Some(o) = &obj {
         if let Err(e) = std::fs::write(o.join("ende.obj"), ausgabe::obj(&s)) {
             return fehler(format!("{}: {e}", o.display()));
@@ -528,6 +573,35 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         println!("  geschrieben  {} (koerper.obj, anfang.obj, ende.obj; mm)", o.display());
     }
     ExitCode::SUCCESS
+}
+
+/// Tabelle der Abstandskarte: eine Zeile je Teil, darunter die Summe.
+///
+/// Die letzte Spalte zählt die Punkte, die tiefer als [`abstand::INNEN`] in
+/// der Haut stecken. Das ist die Zahl, die ein einschneidendes Teil verrät —
+/// und die im Mittel untergeht.
+fn abstand_tabelle(k: &abstand::Karte) {
+    println!("  Teil                                    Punkte      min  Median   90 %    max   innen");
+    for t in &k.je_teil {
+        let v = &t.verteilung;
+        println!(
+            "  {:<40} {:6} {:8.1} {:7.1} {:6.1} {:6.1} {:7}{}",
+            t.name,
+            v.anzahl,
+            v.min,
+            v.median,
+            v.p90,
+            v.max,
+            t.innen,
+            if t.innen > 0 { "  ← steckt in der Haut" } else { "" }
+        );
+    }
+    let g = k.gesamt();
+    let innen: usize = k.je_teil.iter().map(|t| t.innen).sum();
+    println!(
+        "  {:<40} {:6} {:8.1} {:7.1} {:6.1} {:6.1} {:7}",
+        "(alle)", g.anzahl, g.min, g.median, g.p90, g.max, innen
+    );
 }
 
 /// Rechnet das Anziehen mit einem Rechenweg. Je Bild die Wandzeit des
