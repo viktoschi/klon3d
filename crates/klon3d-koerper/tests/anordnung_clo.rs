@@ -9,8 +9,8 @@
 //! Fehlt die Prüfdatei oder CLOs Ordner, wird übersprungen.
 
 use klon3d_koerper::anordnung_clo::{
-    aus_clo_koerper, CloNummern, L_ELLBOGEN, L_HALS_HINTEN, L_HALS_SEITLICH, L_HALS_VORN,
-    L_SCHULTER, SYMMETRIE_PUNKTE,
+    aus_clo_koerper, CloNummern, L_ACHSEL, L_ARMHOCH_HINTEN, L_ARMHOCH_VORN, L_BRUSTPUNKT,
+    L_ELLBOGEN, L_HALS_HINTEN, L_HALS_SEITLICH, L_HALS_VORN, L_SCHULTER, SYMMETRIE_PUNKTE,
 };
 use klon3d_koerper::Netz;
 use klon3d_pattern::zprj::Projekt;
@@ -150,6 +150,10 @@ fn anordnung_aus_clo_koerper_und_clo_ordner() {
         (L_SCHULTER[1], "Schulterpunkt rechts", 0),
         (L_ELLBOGEN[0], "Ellbogen links", 1),
         (L_ELLBOGEN[1], "Ellbogen rechts", 0),
+        (L_ACHSEL[0], "Achsel links", 4),
+        (L_ACHSEL[1], "Achsel rechts", 4),
+        (L_BRUSTPUNKT[0], "Brustpunkt links", 4),
+        (L_BRUSTPUNKT[1], "Brustpunkt rechts", 4),
     ] {
         let i = nummern.landmarke(zeile).expect("Landmarke ist ein Punkt");
         assert_eq!(
@@ -174,6 +178,35 @@ fn anordnung_aus_clo_koerper_und_clo_ordner() {
         an.hals_vorn[1],
         an.schulter[0][1].min(an.schulter[1][1])
     );
+
+    // ── Die Achsel ist der tiefste der drei Armlochpunkte, der Brustpunkt
+    //    liegt unter der Achsel. Beides sind Aussagen über CLOs eigene
+    //    Landmarken (L12/L14/L16 bzw. L18), nicht über eine Messung. ──
+    for (i, seite) in ["links", "rechts"].into_iter().enumerate() {
+        let armloch = [
+            nummern.landmarke(L_ARMHOCH_VORN[i]).expect("vorderer Armlochpunkt"),
+            nummern.landmarke(L_ARMHOCH_HINTEN[i]).expect("hinterer Armlochpunkt"),
+            nummern.landmarke(L_ACHSEL[i]).expect("Achsel"),
+        ];
+        let hoehen: Vec<f64> = armloch.iter().map(|&k| netz.punkte[k][1]).collect();
+        let tiefste = hoehen.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(
+            (hoehen[2] - tiefste).abs() < 1e-9,
+            "{seite}: die Achsel (L{}) muss der tiefste Armlochpunkt sein, Höhen {hoehen:?}",
+            L_ACHSEL[i]
+        );
+        assert!(
+            an.brustpunkt[i][1] < an.achsel[i][1],
+            "{seite}: Brustpunkt ({:.1}) muss unter der Achsel ({:.1}) liegen",
+            an.brustpunkt[i][1],
+            an.achsel[i][1]
+        );
+        // Und die Werte in der Anordnung sind die der Landmarken, nicht
+        // irgendwelche Nachbarpunkte.
+        assert_eq!(an.achsel[i], netz.punkte[armloch[2]], "{seite}: Achsel");
+        let b = nummern.landmarke(L_BRUSTPUNKT[i]).expect("Brustpunkt");
+        assert_eq!(an.brustpunkt[i], netz.punkte[b], "{seite}: Brustpunkt");
+    }
 
     // ── Die Punktmengen ──
     assert_eq!(an.rumpf.len(), 5_090, "Rumpf (CLO segment 4)");

@@ -8,9 +8,11 @@
 //! Schwerkraft; die letzten 10 s der Ruhe sind die Haltephase (ADR-023).
 //! Ausgabe: Abstandskarte Stoff → Haut je Teil (Stufe 5, [`klon3d_sim::abstand`]),
 //! Dehnungskarte je Teil ([`klon3d_sim::dehnung`]), Spannungskarte je Teil in
-//! N/m ([`klon3d_sim::spannung`]), Nahtabstände je Naht,
+//! N/m ([`klon3d_sim::spannung`]), Nahtlage gegen die benannten Körperpunkte
+//! ([`klon3d_sim::nahtlage`]), Nahtabstände je Naht,
 //! tiefster Punkt, auf Wunsch `koerper.obj`, `anfang.obj`, `ende.obj` (mm),
-//! `abstand.csv`, `dehnung.csv` und `spannung.csv` in je einem Ordner, dazu mit
+//! `abstand.csv`, `dehnung.csv`, `spannung.csv` und `nahtlage.csv` in je einem
+//! Ordner, dazu mit
 //! `--farben` alle Karten als OBJ mit Farbe je Eckpunkt
 //! ([`klon3d_sim::farbkarte`]).
 //!
@@ -31,14 +33,14 @@ use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
 use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
 use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
 use klon3d_sim::{
-    abstand, ausgabe, dehnung, farbkarte, messung, spannung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper,
+    abstand, ausgabe, dehnung, farbkarte, messung, nahtlage, spannung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper,
     Koerpernetz,
     Material, Simparameter, Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
 };
 
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
-                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--spannung <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
+                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--spannung <ordner>] [--nahtlage <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
                       [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
@@ -66,6 +68,8 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut dehnung_ordner: Option<PathBuf> = None;
     // Spannungskarte (Stufe 5, Aufgabe #23): Ordner für `spannung.csv`.
     let mut spannung_ordner: Option<PathBuf> = None;
+    // Seam map (stage 5, task #25): folder for `nahtlage.csv`.
+    let mut nahtlage_ordner: Option<PathBuf> = None;
     // Coloured maps as OBJ (stage 5, tasks #19/#23): folder for `dehnung.obj`,
     // `spannung.obj` and `abstand.obj`.
     let mut farben_ordner: Option<PathBuf> = None;
@@ -119,6 +123,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "--abstand" => abstand_ordner = Some(PathBuf::from(w)),
             "--dehnung" => dehnung_ordner = Some(PathBuf::from(w)),
             "--spannung" => spannung_ordner = Some(PathBuf::from(w)),
+            "--nahtlage" => nahtlage_ordner = Some(PathBuf::from(w)),
             "--farben" => farben_ordner = Some(PathBuf::from(w)),
             "--ordner" => resizing = PathBuf::from(w),
             "--naehbilder" => match w.parse() {
@@ -604,6 +609,17 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         // es ein Fehler in einer der beiden Karten.
         println!("  Hinweis      die stärkste Kraft sitzt nicht auf dem stärksten Dehnungsdreieck — bei gemischten Dicken normal");
     }
+    // Seam position (stage 5, task #25): the last open line of the stage. The
+    // seam is the sewn seam — the midpoint of each pair — and the distance is
+    // taken to the polyline through those midpoints, not to the sampled points.
+    if !s.koerper.is_empty() {
+        let karte_nahtlage = nahtlage::Karte::messe(&s, &p.netz, &koerperpunkte(&an));
+        println!();
+        println!(
+            "  Nahtlage, Endzustand (kleinster Abstand jeder Naht zu den benannten Körperpunkten, mm; die Naht ist die Mittellinie der vernähten Paare):"
+        );
+        nahtlage_tabelle(&karte_nahtlage);
+    }
     if let Some(o) = &abstand_ordner {
         // Ohne Körper gibt es keine Karte — dann wäre eine leere Datei eine
         // Lüge, also ein Fehler statt einer stillen Null.
@@ -639,6 +655,23 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "  geschrieben  {} (spannung.csv: Dreieck, Teil, Ruhefläche in cm², beide Hauptkräfte in N/m, Dehnsteifigkeit)",
             o.display()
         );
+    }
+    // Seam position (stage 5, task #25): the last open line of the stage. It
+    // needs the body, because the points are body points; without one there is
+    // no number rather than a zero.
+    if let Some(o) = &nahtlage_ordner {
+        if !s.koerper.is_empty() {
+            let e = nahtlage::Karte::messe(&s, &p.netz, &koerperpunkte(&an));
+            if let Err(err) = std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("nahtlage.csv"), e.csv())) {
+                return fehler(format!("{}: {err}", o.display()));
+            }
+            println!(
+                "  geschrieben  {} (nahtlage.csv: Naht, Länge in mm, Paare, Körperpunkt, Abstand in mm, Paar, Anteil, Ort in cm)",
+                o.display()
+            );
+        } else {
+            println!("  übersprungen {}: die Szene hat keinen Körper", o.join("nahtlage.csv").display());
+        }
     }
     if let Some(o) = &obj {
         if let Err(e) = std::fs::write(o.join("ende.obj"), ausgabe::obj(&s)) {
@@ -698,6 +731,61 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// Die sechs benannten Körperpunkte der Nahtlage, in Szenenkoordinaten (m).
+///
+/// Reihenfolge und Namen sind Teil der Ausgabe: „Achsel links" und „Achsel
+/// rechts" sind zwei Punkte, und die Tabelle nennt sie einzeln, statt „die
+/// Achsel" zu schreiben und offenzulassen, welche gemeint ist.
+fn koerperpunkte(an: &klon3d_koerper::koerper::Anordnung) -> Vec<nahtlage::Koerperpunkt> {
+    let c = |q: [f64; 3]| {
+        let q = klon3d_sim::netzkoerper::clo_nach_szene(q);
+        nahtlage::Koerperpunkt {
+            name: String::new(),
+            punkt: q,
+        }
+    };
+    let mut v = Vec::with_capacity(6);
+    for (name, paar) in [
+        ("Achsel", an.achsel),
+        ("Schulterpunkt", an.schulter),
+        ("Brustpunkt", an.brustpunkt),
+    ] {
+        for (i, seite) in ["links", "rechts"].into_iter().enumerate() {
+            let mut p = c(paar[i]);
+            p.name = format!("{name} {seite}");
+            v.push(p);
+        }
+    }
+    v
+}
+
+/// Tabelle der Nahtlage: eine Zeile je Naht, je Körperpunkt eine Spalte mit dem
+/// kleinsten Abstand in mm. Ein Punkt, zu dem die Naht keinen Abstand hat (die
+/// Naht ist leer), bleibt leer statt auf 0 zu fallen.
+fn nahtlage_tabelle(k: &nahtlage::Karte) {
+    // 21 columns: the longest name ("Schulterpunkt rechts") is 21 characters,
+    // so every column stays under its heading instead of shifting the row.
+    print!("  {:<6} {:>8} {:>6}", "Naht", "Länge", "Paare");
+    for p in &k.punkte {
+        print!(" {:>21}", p.name);
+    }
+    println!("  (mm)");
+    for n in &k.je_naht {
+        print!("  {:<6} {:8.1} {:6}", n.kennung, n.laenge_m * 1e3, n.paare);
+        for p in &k.punkte {
+            match n.je_punkt.iter().find(|q| q.koerperpunkt == p.name) {
+                Some(q) => print!(" {:21.1}", q.stelle.abstand * 1e3),
+                None => print!(" {:>21}", "-"),
+            }
+        }
+        println!();
+    }
+    if let Some((d, naht, punkt)) = k.kleinster() {
+        // `kleinster` is in metres like every other field; the table is in mm.
+        println!("  kleinster Abstand {:.1} mm: {naht} zu {punkt}", d * 1e3);
+    }
 }
 
 /// Tabelle der Dehnungskarte: eine Zeile je Teil, darunter die Summe.

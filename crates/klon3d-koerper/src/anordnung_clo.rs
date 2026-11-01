@@ -139,21 +139,46 @@ pub const SYMMETRIE_PUNKTE: usize = 40_465;
 /// | 5 | 7. Halswirbel | hintere Halsmitte (Mittellinie) |
 /// | 6, 7 | HPS links, rechts | seitlicher Hals |
 /// | 8, 9 | Schulterpunkt links, rechts | Schulter |
+/// | 16, 17 | Achsel links, rechts | tiefster Punkt des Armlochs, Rumpf |
+/// | 18, 19 | Brustpunkt links, rechts | APEX, Rumpf |
 /// | 49, 52 | Ellbogen hinten links, rechts | Ellbogen |
+///
+/// **Warum die Achsel L16/L17 ist und nicht L12/L13.** Das Armloch kommt in
+/// CLOs Landmarken viermal vor: L12/L13 ist der **vordere** Armlochpunkt (er
+/// trägt zusätzlich `AcrossFront`), L14/L15 der **hintere** (`AcrossBack`), und
+/// L16/L17 ist der einzige, der im Rumpfsegment liegt und von den dreien am
+/// tiefsten sitzt — die Achselgrube, an der die Seitennaht auf das Armloch
+/// trifft. Die drei sind getrennte benannte Punkte der Körperdaten; die Wahl
+/// steht deshalb hier, statt in einer Zahl ohne Namen.
 pub const L_HALS_VORN: usize = 4;
 pub const L_HALS_HINTEN: usize = 5;
 pub const L_HALS_SEITLICH: [usize; 2] = [6, 7];
 pub const L_SCHULTER: [usize; 2] = [8, 9];
+pub const L_ACHSEL: [usize; 2] = [16, 17];
+pub const L_BRUSTPUNKT: [usize; 2] = [18, 19];
 pub const L_ELLBOGEN: [usize; 2] = [49, 52];
 
+/// Die beiden anderen Armlochpunkte, die [`Anordnung`] **nicht** übernimmt:
+/// L12/L13 vorn (tragen `AcrossFront`), L14/L15 hinten (tragen `AcrossBack`).
+///
+/// Sie stehen hier, damit die Wahl der Achsel nachprüfbar ist: der benutzte
+/// Punkt muss der tiefste der drei sein. Ohne sie wäre „die Achsel ist L16"
+/// eine Behauptung ohne Vergleich.
+pub const L_ARMHOCH_VORN: [usize; 2] = [12, 13];
+pub const L_ARMHOCH_HINTEN: [usize; 2] = [14, 15];
+
 /// Index in `IndexSet.txt` je Zeile, wie sie [`Anordnung`] braucht.
-pub const BENUTZT: [usize; 8] = [
+pub const BENUTZT: [usize; 12] = [
     L_HALS_VORN,
     L_HALS_HINTEN,
     L_HALS_SEITLICH[0],
     L_HALS_SEITLICH[1],
     L_SCHULTER[0],
     L_SCHULTER[1],
+    L_ACHSEL[0],
+    L_ACHSEL[1],
+    L_BRUSTPUNKT[0],
+    L_BRUSTPUNKT[1],
     L_ELLBOGEN[0],
     L_ELLBOGEN[1],
 ];
@@ -251,12 +276,25 @@ pub fn aus_clo_koerper(netz: &Netz, nummern: &CloNummern) -> Result<Anordnung, S
     let i_hals_hinten = nummer(L_HALS_HINTEN)?;
     let i_hals_seitlich = [nummer(L_HALS_SEITLICH[0])?, nummer(L_HALS_SEITLICH[1])?];
     let i_schulter = [nummer(L_SCHULTER[0])?, nummer(L_SCHULTER[1])?];
+    let i_achsel = [nummer(L_ACHSEL[0])?, nummer(L_ACHSEL[1])?];
+    let i_brustpunkt = [nummer(L_BRUSTPUNKT[0])?, nummer(L_BRUSTPUNKT[1])?];
     let i_ellbogen = [nummer(L_ELLBOGEN[0])?, nummer(L_ELLBOGEN[1])?];
 
     pruefe_nummern(nummern, &[
         ("Hals seitlich", i_hals_seitlich, Some(segment::KOPF)),
         ("Schulter", i_schulter, Some(segment::ARM_LINKS)),
         ("Ellbogen", i_ellbogen, Some(segment::ARM_LINKS)),
+    ])?;
+    // Achsel und Brustpunkt in einem eigenen Aufruf, nicht im selben: die
+    // **ältere** `IndexSet.txt` nennt für L16/L17 und L14/L15 Punkte, die laut
+    // `symmetry_data.sym` keine Spiegelpartner sind (L16 → 21058, L17 → 5409);
+    // nur die neuere Fassung ist dort stimmig (7104 ↔ 22734, 5969 ↔ 21601).
+    // Dieselbe Abweichung wie bei L52 — und wie dort gilt: die
+    // Spiegelzuordnung entscheidet, nicht die Zeile in der Datei. Getrennt
+    // aufgerufen, damit die bestehende L52-Meldung unverändert zuerst kommt.
+    pruefe_nummern(nummern, &[
+        ("Achsel", i_achsel, Some(segment::RUMPF)),
+        ("Brustpunkt", i_brustpunkt, Some(segment::RUMPF)),
     ])?;
     // Mittellinie: die beiden Halspunkte sind laut CLO ihr eigener Partner.
     pruefe_mittellinie(nummern, "Drosselgrube", i_hals_vorn)?;
@@ -269,6 +307,8 @@ pub fn aus_clo_koerper(netz: &Netz, nummern: &CloNummern) -> Result<Anordnung, S
         hals_hinten: netz.punkte[i_hals_hinten],
         hals_seitlich: i_hals_seitlich.map(|i| netz.punkte[i]),
         schulter: i_schulter.map(|i| netz.punkte[i]),
+        achsel: i_achsel.map(|i| netz.punkte[i]),
+        brustpunkt: i_brustpunkt.map(|i| netz.punkte[i]),
         ellbogen: i_ellbogen.map(|i| netz.punkte[i]),
     })
 }
