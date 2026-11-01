@@ -27,6 +27,8 @@
 //!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
 //! * [`vergleich`] — zwei Netze gegeneinander messen: Abstand jedes Knotens
 //!   zur Fläche des anderen, in beide Richtungen (Stufe 5);
+//! * [`vergleichskarte`] — beide Netze mit Farbe je Eckpunkt als OBJ, die
+//!   Anzeige der Vergleichskarte (Stufe 5);
 //! * [`ausgabe`] — OBJ und Dehnung je Dreieck.
 
 #![allow(non_snake_case)] // Tests sind deutsch benannt
@@ -48,6 +50,7 @@ pub mod roehre;
 pub mod selbstkollision;
 pub mod szene;
 pub mod vergleich;
+pub mod vergleichskarte;
 pub mod verteilung;
 
 pub use cpu::{CpuReferenz, Rechenweg};
