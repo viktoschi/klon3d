@@ -488,6 +488,10 @@ pub struct GpuLoeser {
     /// Iterations the previous solve needed, to record passes for about that
     /// many. The recorded passes past convergence are empty, but not free.
     letzte_it: usize,
+    /// `true` while the buffers still hold the result of the last solve, so the
+    /// release pass can reuse `Δv` on the device instead of uploading the system
+    /// a second time.
+    bereit: bool,
 }
 
 impl std::fmt::Debug for GpuLoeser {
@@ -584,6 +588,7 @@ impl GpuLoeser {
             ausweich: 0,
             zeiten: [0.0; 2],
             letzte_it: 0,
+            bereit: false,
         })
     }
 
@@ -694,6 +699,8 @@ impl GpuLoeser {
     }
 
     fn hochladen(&mut self, sys: &System<'_>, fest: &[Option<Fest>], dv: &[[f64; 3]]) -> Speicher {
+        // Whatever was in the buffers is gone after this: `dv` is overwritten.
+        self.bereit = false;
         let n = sys.masse.len();
         let kanten = sys.kanten.len() + sys.naehte.len();
         let neu = match &self.speicher {
@@ -1002,6 +1009,9 @@ impl GpuLoeser {
             }
         };
         self.letzte_it = it;
+        // `l_dv` still holds this result, so the release pass can apply the
+        // operator on the device instead of uploading the system again.
+        self.bereit = true;
         let t2 = std::time::Instant::now();
         self.zeiten = [(t1 - t0).as_secs_f64() * 1e3, (t2 - t1).as_secs_f64() * 1e3];
         for i in 0..n {
@@ -1118,6 +1128,8 @@ impl Loeser for GpuLoeser {
     fn loese(&mut self, sys: &System<'_>, fest: &[Option<Fest>], dv: &mut [[f64; 3]]) -> CgLauf {
         if !sys.federn.is_empty() {
             self.ausweich += 1;
+            // The CPU solve does not put anything into the device buffers.
+            self.bereit = false;
             return self.cpu.loese(sys, fest, dv);
         }
         self.loese_gpu(sys, fest, dv)
@@ -1128,6 +1140,40 @@ impl Loeser for GpuLoeser {
         for (o, g) in out.iter_mut().zip(&gpu) {
             *o = *g;
         }
+    }
+
+    /// The release pass after a solve: `Δv` is still in the device buffer, so
+    /// the unfiltered `A·Δv` runs there without uploading the system again.
+    /// `op_warm` is exactly that operator - unfiltered `A·p` over the whole
+    /// grid, reading `l_dv`.
+    fn mal_a_geloest(&mut self, sys: &System<'_>, dv: &[[f64; 3]], out: &mut [[f64; 3]]) {
+        if !self.bereit || self.speicher.as_ref().is_none_or(|s| s.n != sys.masse.len()) {
+            return self.mal_a(sys, dv, out);
+        }
+        let s = self.speicher.clone().expect("geprüft");
+        let par = self.params(&s, sys, 0);
+        self.queue
+            .write_buffer(&s.params, 0, bytemuck::bytes_of(&par));
+        let gruppen = (s.n as u32).div_ceil(256).max(1);
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            cp.set_pipeline(&self.op_warm);
+            cp.set_bind_group(0, &s.bind, &[]);
+            cp.dispatch_workgroups(gruppen, 1, 1);
+        }
+        self.queue.submit([enc.finish()]);
+        let f = self.lesen(&s, Lage::neu(s.n).ap, s.n);
+        for (o, i) in out.iter_mut().zip(0..s.n) {
+            *o = [
+                f[i * 4] as f64,
+                f[i * 4 + 1] as f64,
+                f[i * 4 + 2] as f64,
+            ];
+        }
+        // The operator wrote over `l_ap`, not `l_dv`; the result is still there.
     }
 }
 

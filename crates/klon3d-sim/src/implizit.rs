@@ -233,6 +233,17 @@ pub trait Loeser: std::fmt::Debug {
     fn loese(&mut self, sys: &System<'_>, fest: &[Option<Fest>], dv: &mut [[f64; 3]]) -> CgLauf;
     /// `A·p` ohne Filter, für den Freigabe-Durchgang (Normalkraft aus dem Rest).
     fn mal_a(&mut self, sys: &System<'_>, p: &[[f64; 3]], out: &mut [[f64; 3]]);
+
+    /// `A·Δv` für den Freigabe-Durchgang, wenn `Δv` genau das ist, was der
+    /// letzte [`Loeser::loese`] zurückgegeben hat, und `sys` dasselbe System.
+    ///
+    /// Die Vorgabe rechnet wie [`Loeser::mal_a`]. Ein Backend, das `Δv` noch
+    /// auf dem Gerät hat, kann sich den Transfer sparen: der Freigabe-Durchgang
+    /// braucht nur die ungefilterte Anwendung, und die hängt nicht davon ab,
+    /// welche Punkte gehalten werden - nur die *zweite* Lösung tut das.
+    fn mal_a_geloest(&mut self, sys: &System<'_>, dv: &[[f64; 3]], out: &mut [[f64; 3]]) {
+        self.mal_a(sys, dv, out);
+    }
 }
 
 /// Der CPU-Löser: matrixfreies PCG in `f64`, genau das Verfahren, das die
@@ -703,9 +714,17 @@ impl ImplizitCg {
             if lauf.nicht_konvergiert {
                 self.statistik.nicht_konvergiert += 1;
             }
+            // No point is held: nothing can be released, and the normal force
+            // is only needed for held points. The operator below would write
+            // nothing, so the whole pass is skipped - it costs a separate
+            // upload and readback otherwise (11 % of the frame on the blouse,
+            // which has no body).
+            if fest.iter().all(|f| f.is_none()) {
+                break;
+            }
             // Normalkraft aus dem Rest r = A·Δv − b (in Normalrichtung) / h.
             let mut adv = vec![[0.0; 3]; n];
-            self.loeser.mal_a(&sys, &dv, &mut adv);
+            self.loeser.mal_a_geloest(&sys, &dv, &mut adv);
             let mut frei = false;
             for i in 0..n {
                 if let Some(fe) = fest[i] {
