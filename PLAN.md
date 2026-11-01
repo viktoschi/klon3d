@@ -224,19 +224,65 @@ includes **motion** (stage 7), and that needs the computing power of the GPU.
 | **4a′ Tube, implicit with CG like CLO (CPU reference, basis)** | second computation path `ImplizitCg` in `klon3d-sim`: backward Euler, matrix-free PCG with 3×3 diagonal blocks, contact filter, normal force from the system, Coulomb friction, warm start; CLO setting of 1 step per frame, 50 CG iterations, seam spring 500 N/m | **done** (finding 35): tube, both fabrics at 5.5/10%, with the same acceptance as 4a, slip test at most 1.6% off the discrete path; frictionless, the same equilibrium as XPBD; blouse 13–137 ms per frame instead of 1.2–4 s, on the GPU around 310 instead of 140,000 dispatches per frame. Limits: a stiff seam only just converges, loose pieces come to rest poorly with 50 iterations. The basis since ADR-020 |
 | **Substeps per frame** | `schritte_je_bild` in `ImplizitParameter` | **done**: default 5, matching the `Nonlinear` preset (residual 1e-5). With one substep a 5.5% Radical band on the reference body does not settle and sits 2-4% off the tape-measure circumference; the error falls monotonically with the substep count (0.06% at five) |
 | **Body as collision body** (before 4c) | body from `klon3d koerper` as a mesh in `klon3d-sim` (`netzkoerper.rs`, `Koerper::Netz`): signed distance via the nearest point and angle-weighted pseudonormals, grid search (20 mm cells, 10 mm search depth), in the implicit step a penetration check along the path with Coulomb friction on the impact. Test cases: tube on a cylinder mesh, band around the waist, point rain | **done** (finding 94): tube on the mesh, ε within 0.002 pp of the analytic case, frictionless the same equilibrium, slip test −0.11/+0.41%; band (10 mm mesh) at rest in all four cases, edges against the tape measure in their plane: Retifist ≤ 0.25%, Radical ≤ 2.7%, no point inside the skin; point rain at 6 m/s 100/100 at the impact location (without the penetration check 10/100). Open: the Radical band in the 5 mm mesh folds and does not come to rest without self-collision; body vertex against cloth triangle; moving body |
-| **4b GPU** | the implicit step from 4a′ as a WGSL compute shader via `wgpu`, `f32` (ADR-020): forces and 3×3 Jacobian blocks per edge, seam and bending, gathered per point via neighbor lists (no atomics); matrix-free A·p, block-Jacobi preconditioner with contact filter, dot products as reductions in a fixed order, warm start; contact, normal force and friction per point; collision and self-collision via spatial hashing. To be settled with 4b (finding 35, section 5): a better preconditioner for stiffer seams and loose pieces; whether edge springs are replaced by a triangle continuum | the same equilibrium as `ImplizitCg` on the tube and on the blouse in a standing pose (define and justify the tolerance), also at body height; slip test as in finding 35; Bluse3 v2 at ≥ 30 frames per second on the RTX 3090 (goal: 50 iterations, around 310 dispatches per frame); GPU tests skip themselves without an adapter and report it |
+| **4b GPU** | the implicit step from 4a′ as a WGSL compute shader via `wgpu`, `f32` (ADR-020): forces and 3×3 Jacobian blocks per edge, seam and bending, gathered per point via neighbor lists (no atomics); matrix-free A·p, block-Jacobi preconditioner with contact filter, dot products as reductions in a fixed order, warm start; contact, normal force and friction per point; collision and self-collision via spatial hashing. To be settled with 4b (finding 35, section 5): a better preconditioner for stiffer seams and loose pieces; whether edge springs are replaced by a triangle continuum | the same equilibrium as `ImplizitCg` on the tube and on the blouse in a standing pose (define and justify the tolerance), also at body height; slip test as in finding 35; Bluse3 v2 at ≥ 30 frames per second on the RTX 3090. **Partly done** (#27, #29): the solve runs on the GPU and is **2.08× faster than the CPU per solve** on the blouse (5.57 against 11.55 ms, 120 solves after a warm-up, same `cg_max` and tolerance), 1.78× per frame; on the CLO body 382/278/281 ms per frame against 455/383/423 — still above 33 ms. The operator runs over the whole grid (0.034 against 0.52 ms per pass), the reductions on one workgroup, all passes in one submission. The tube (1 236 points) stays slower: fixed transfer cost. Open: the 30 fps criterion (the rest of the step is still on the CPU), a better preconditioner, self-collision on the GPU; GPU tests skip themselves without an adapter and report it |
 | **4c Placement** | place the 2D pieces around the body before sewing. CLO puts them on arrangement points on hull bodies around torso, arms and legs (finding 71, addendum); klon3d needs its own simple approach, e.g. zone and side per piece (in the seam list or a separate file) and cylinders or ellipses from the body measurements of stage 2. Then the seam constraints pull the pieces together. **Built** (`platzierung.rs`, placement file `<pattern>.lage`, `klon3d anziehen`): vertical torso prism from the convex hull of the torso points, around the arm the cross-section hull per centimeter, neck seam with height and radius per angle from the four landmarks (slanted, not a horizontal circle; finding 121); per piece: zone, reference point (also from another piece of the same block), circumferential position in degrees or cm, height at a reference height, `gespiegelt` (mirrored), `drehung` (rotation), `abstand` (offset) | all pieces of Bluse3 v2 lie around the body without penetration, the seams close. **Largely done** (findings 95, 96): 16 sewn pieces placed (12 glued-on ones are missing until glue zones exist); dressed with a limited sewing speed (0.1 m/s) and body vertex against cloth triangle during sewing, around the arm a length-preserving arm prism: no point inside the skin, every seam median < 0.8 mm, **98.6% of seam pairs ≤ 10 mm**, 18 of 24 seams fully closed (finding 95 without both: 92.4%). **Generality** (finding 98): Bluse1 v25 and bustier v1 as further test patterns, all three with the same settings — sewn while held (without gravity), cloth points pushed out of the skin beforehand, seam spring 2,000 N/m during dressing, thickness per piece (`dicke` in the placement file), then 2 s of settling and a 10 s hold phase under full gravity (ADR-023): **Bluse3 99.4%, Bluse1 99.1%, bustier 94.6%**, no piece sinks more than 0.4 mm. Finding 100: Bolero v37 96.5% (pleats as darts), skirt v36 95.1% (holds, but not fully at rest: flared panels overlap on the vertical prism); finding 101: seam list and placement **automatic** (`klon3d naehte --vorschlag`, `klon3d lage`); dressed entirely without hand-written files, all five hold (Bluse3 98.6%, Bluse1 98.0%, bustier 96.0%, bolero without sleeves 96.0%, skirt 95.7% — the skirt reacts chaotically to tenths of a millimeter in the initial placement); the placement suggestion lies 0.3–2.8 cm off the hand-made placements. Finding 102: the unrest came from truncated CG solves (50 iterations); with up to 600 iterations during dressing, a torso hull that widens under flared panels, and settling until at rest (2–20 s) before the hold phase: **Bluse3 98.9%, Bluse1 98.9%, bustier 93.6%, bolero 94.5%, skirt 99.2%** with hand-written files, all hold (±0.2 mm), the skirt is insensitive to the initial placement; computing time up to three times longer. Open: corners (sleeve hem, collar end, cup attachments), zones for legs and head, gaps in the pattern reader (`cutArc`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, curve names with an underscore) |
 | **4d Test blouse v26 standing** | the whole blouse on the shaped body from `klon3d koerper` | acceptance criterion below; in addition "holds" per ADR-023: after dressing ≥ 10 s of full gravity, no piece sinks more than 5 mm, nothing pinned |
 
-**Status of 4b (task #27): the CG solve runs on the GPU, and it is not yet
-faster.** `gpu.rs` solves `A·Δv = b` with the same matrix-free PCG in `f32`: the
-operator over edges, seams and bending gathered per point over a neighbour
-list, the block-Jacobi preconditioner, the contact filter, fixed-order
-reductions, warm start and the same stopping rule. It runs as **one compute
-shader** (one workgroup, `workgroupBarrier` between phases): a dispatch per
-phase needs about 40 µs on this machine, which is already the length of a CPU
-iteration, and five of them per iteration lost against the CPU before the
-shader was written.
+**Status of 4b (tasks #27, #29): the CG solve runs on the GPU and is faster
+than the CPU on the blouse.** `gpu.rs` solves `A·Δv = b` with the same
+matrix-free PCG in `f32`: the operator over edges, seams and bending gathered
+per point over a neighbour list, the block-Jacobi preconditioner, the contact
+filter, fixed-order reductions, warm start and the same stopping rule.
+
+The operator runs over the **whole grid**, everything else on **one workgroup**.
+`A·p` has no dependency between points, so it needs no barrier inside and is
+about 15 times faster spread over the card than gathered by a single workgroup
+(0.036 against 0.57 ms per pass on the blouse). The reductions, the
+preconditioner and the vector updates do need the barrier and stay in one
+workgroup of 1024 lanes. The passes of a solve go into **one submission**; the
+pass boundary is the global barrier between them and costs about 6 µs. The CG
+state sits in the data buffer, so it survives the boundary.
+
+The number of recorded iterations follows the previous solve. A pass past
+convergence returns at once but still costs its dispatch — recording the full
+`cg_max` wasted about 30 ms per solve.
+
+Measurements: `cargo run --release -p klon3d-sim --example gpu_takt` solves a
+fixed system 120 times after a warm-up, same `cg_max`, same tolerance. Runs on
+different days repeat within a few percent.
+
+| | CPU (`f64`) | GPU (`f32`, wgpu) |
+|---|---|---|
+| blouse, 6 471 points, one solve | 11.60 ms | **6.01 ms** (1.93×) |
+| blouse, whole frame | 76.9 ms | **47.3 ms** (1.63×) |
+| tube, 1 236 points, one solve | 2.23 ms | 3.83 ms |
+| tube, whole frame | 2.37 ms | 16.9 ms |
+| `A·p`, one pass on the blouse | - | **0.036 ms** (whole grid) / 0.57 ms (one workgroup) |
+| empty pass | - | 0.008 ms |
+
+Repeated runs of the blouse solve gave 1.85–2.10×. **The tube stays slower**,
+in the frame by 7×: at 1 236 points the fixed cost per solve (upload 0.1 ms,
+readback and wait about 3 ms) dwarfs the arithmetic, and its frame converges in
+a few iterations where the benchmark forces 50. The GPU pays off from a few
+thousand points; a solver choice that falls back to the CPU for small systems
+would be a change of its own.
+
+On the CLO body (`japanese_school_uniform.zprj`), full settings,
+`klon3d anziehen [--rechenweg gpu]`, medians per phase:
+
+| | CPU (`f64`) | GPU (`f32`, wgpu) |
+|---|---|---|
+| frame, sewing | 455 ms | **382 ms** |
+| frame, settling | 383 ms | **278 ms** |
+| frame, holding | 423 ms | **281 ms** |
+| CG iterations per solve | 122 | 135 |
+| solves that did not converge | 0 of 9 792 | 1 of 9 792 |
+
+The 30 fps criterion is still **not** reached: at ~130 ms of solve time per
+frame (5 substeps) the rest of the step — forces, contact queries, penetration
+push, friction — is on the CPU and takes the larger share. The next lever is
+therefore either the preconditioner (fewer iterations, finding 35 section 5) or
+moving the contact queries to the GPU.
 
 What is proven (tests, `cargo test --release -p klon3d-sim --test gpu`, all
 green on the RTX 3090, and skipped without an adapter):
@@ -250,32 +296,15 @@ green on the RTX 3090, and skipped without an adapter):
 * without a body, both backends shrink the tube to the same minimum (largest
   point distance 1e-5 m).
 
-What it costs and what it yields, measured on Bluse3 v2 on the CLO body
-(`japanese_school_uniform.zprj`), full settings, `klon3d anziehen [--rechenweg
-gpu]`:
+Both acceptance runs on the CLO body are reproducible to the byte: the CPU run
+is identical to the reference of task #25 (`E86DDF85…`), and the GPU run is
+identical to the one of task #27 (`F9CE8A40…`) even though the solve went from
+one workgroup to a host-driven pass chain — the arithmetic order did not
+change, only who runs it.
 
-| | CPU (`f64`) | GPU (`f32`, wgpu) |
-|---|---|---|
-| frame, sewing | 403 ms | 613 ms |
-| frame, settling | 342 ms | 557 ms |
-| frame, holding | 334 ms | 563 ms |
-| CG iterations per solve | 122 | 135 |
-| solves that did not converge | 0 of 9 792 | 1 of 9 792 |
-| `ende.obj` against the CPU run | - | median 0.85 mm, mean 2.14 mm, max 22.4 mm |
-
-The CPU run of the same command under this change is **byte-identical** to the
-reference of task #25 (`E86DDF85…`): the step itself did not change, only who
-solves the linear system. The GPU state is within the 2 mm noise floor of the
-comparison map in the median and the mean; the tail differs, which is what the
-last bits of `f32` do on a frictional garment.
-
-So the 30 fps criterion is **not** reached, and the reason is structural: 5 538
-points are too few to fill the card, and one workgroup is latency-bound at
-about 0.4 ms per iteration, while the CPU needs about 0.25 ms. More parallelism
-means more dispatches, and each dispatch costs more than the work. The next
-step is therefore not "more GPU" but fewer iterations (a better
-preconditioner, finding 35 section 5) or a different structure (multigrid,
-several workgroups with one synchronisation per chunk).
+The CPU and GPU states still differ by median 3.5 mm, mean 5.0 mm, max 48 mm
+point to point; that is the f32 solver's own drift on a frictional garment
+(task #27), not a change of this task.
 
 
 Not in this slice: forces, contact distance queries, the penetration push,
