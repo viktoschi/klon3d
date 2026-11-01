@@ -301,7 +301,7 @@ This is the actual purpose, not the display:
 | Output | Shows |
 |---|---|
 | Strain map | percent strain per face relative to the pattern |
-| Distance map | distance from latex to skin — shows a sleeve cap standing off, gaping edges |
+| Distance map | **done for the measure** (`abstand`, #15): signed distance cloth point → skin surface, outside positive, with the nearest skin point and its normal; per-piece table in `anziehen` (min/median/p90/max/count inside), full map as `abstand.csv` via `--abstand <dir>`. Colouring and per-frame output still open. Bluse3 v2 after the run: min +0.2 mm, median 2.4 mm, max 36.6 mm, 0 of 5 538 points inside the skin. Cross-check on the reference garment mesh: median 20.4 mm, min 4.3 mm, 0 inside, 88 718 points in 0.6 s |
 | Seam position | seams against body points (armpit, shoulder point, bust point) |
 | Stress map | where the material pulls |
 | Comparison map | distance between two runs: klon3d against CLO, fabric A against fabric B |
@@ -456,9 +456,19 @@ the arm (98–99% of the nearest body points lie on the arm themselves). Nothing
 0/1,198 right, 0/65,339 skirt, 0/16,082 torso). Garment→skin per group: sleeves 14.0/14.5, back torso 7.7, front 24.7, skirt
 24.5 mm; nowhere below 4.4 mm. The `.pos` is only needed for a **different** pose (fitting).
 
-**Stage 5 cannot be computed yet** (finding 118, section 11): `anziehen` reads `.sm2d` + `.naehte` +
-`.smis` + `.lage`, for the test project there is only the `.zprj`; in addition the axes need rotating (CLO y = height, klon3d
-z = height). The **body** is no longer a blocker (finding 119), and **neither is its segment and landmark mapping** (finding 120):
+Acceptance of the distance map (stage 5, `crates/klon3d-sim/src/abstand.rs`, #15): `klon3d anziehen
+<pattern.sm2d> --abstand <dir>` prints a per-piece table (points, min, median, p90, max, points inside) and writes
+`abstand.csv` (point, piece, position in cm, signed distance in mm, skin normal). The same measure reproduces the
+unsigned comparison exactly on the reference garment: median 20.4 mm, p90 60.2, p99 90.7, max 106.0 mm for 88,718
+points in 0.6 s, min 4.3 mm against finding 119's 4.4. Sign is checked against ray parity on the real body across the
+clothing band (z 0.5–1.45 m, 160 samples, 0 deviations); outside that band the pseudo-normal is unreliable by known
+cases at nose, lip and toes — the test enforces that those deviations exist rather than hiding them.
+Bluse3 v2: 0 of 5,538 points inside the skin, min +0.2 mm, median 2.4 mm, max 36.6 mm.
+
+**What that cross-check does not cover** (finding 118, section 11): it measures CLO's garment mesh against CLO's body,
+not a klon3d run against it — for the reference project there is only the `.zprj` and no `.sm2d` + `.naehte` + `.lage`,
+and the axes need rotating (CLO y = height, klon3d z = height). The **body** was never the blocker
+(finding 119), and **neither is its segment and landmark mapping** (finding 120):
 `klon3d anziehen <pattern.sm2d> --zprj <project.zprj>` takes `body` from the `.avt`, plus segments from
 `range_list.rlist` and landmarks from `IndexSet.txt`. CLO's numbering applies unchanged — confirmed via edges
 (98.56%), neighborhoods (92.2%) and the smoothness of the displacement (0.70 mm against 629.86 mm for a random permutation).

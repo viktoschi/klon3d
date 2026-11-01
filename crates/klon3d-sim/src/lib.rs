@@ -16,6 +16,8 @@
 //!   (Hüllkörper, Lagedatei, Abwicklung);
 //! * [`material`] — Stoffwerte aus CLO-Profilen in SI-Einheiten;
 //! * [`messung`] — Umfang, Dehnung, Nahtspalt, Energie;
+//! * [`abstand`] — Abstandskarte Stoff → Haut: vorzeichenbehaftet je Punkt,
+//!   mit Kennzahlen je Teil (Stufe 5);
 //! * [`roehre`] — der Prüffall von Schritt 4a;
 //! * [`selbstkollision`] - Stoff gegen Stoff wie CLO (Befund 116):
 //!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
@@ -25,6 +27,7 @@
 
 #![allow(non_snake_case)] // Tests sind deutsch benannt
 
+pub mod abstand;
 pub mod ausgabe;
 pub mod cpu;
 pub mod faerbung;

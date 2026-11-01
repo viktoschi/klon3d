@@ -551,6 +551,42 @@ impl Koerpernetz {
         }
     }
 
+    /// Vorzeichenbehafteter Abstand ohne Obergrenze: wie [`Self::naechster`],
+    /// aber der Suchradius wächst, bis ein Dreieck gefunden ist. Für die
+    /// Abstandskarte ([`crate::abstand`]) — ein stehender Ärmel ist 30 mm von
+    /// der Haut weg, die Suchtiefe des Kolliders ist 10 mm.
+    ///
+    /// Das Gitter wird nicht neu gebaut: der Würfel um `x` wächst, bis er ein
+    /// Dreieck enthält. Alles, was weiter als der Hüllquader entfernt ist,
+    /// beantwortet [`Self::naechster_alle`] — der einzige Fall, in dem die
+    /// Abfrage die Dreiecksliste ganz durchläuft.
+    pub fn abstand_ohne_grenze(&self, x: [f64; 3]) -> Naechster {
+        let g = &self.gitter;
+        // Abstand zur fernsten Ecke des Gitters: weiter kann kein Dreieck
+        // liegen, das noch im Gitter steht.
+        let mut quadrat = 0.0;
+        for k in 0..3 {
+            let e = g.ursprung[k] + g.zelle * g.zahl[k] as f64;
+            let d = (x[k] - g.ursprung[k]).abs().max((x[k] - e).abs());
+            quadrat += d * d;
+        }
+        let weit = quadrat.sqrt() + g.zelle;
+        let mut r = self.suchtiefe.max(g.zelle);
+        loop {
+            if g.bereich(sub(x, [r; 3]), add(x, [r; 3])).is_some() {
+                // `naechster` liefert nur, was näher als `r` liegt — und alles
+                // Nähere steht in den Zellen, die der Würfel berührt.
+                if let Some(n) = self.naechster(x, r) {
+                    return n;
+                }
+            }
+            if r >= weit {
+                return self.naechster_alle(x);
+            }
+            r = (r * 2.0).min(weit);
+        }
+    }
+
     /// Nächster Oberflächenpunkt über alle Dreiecke, ohne Gitter — der
     /// Vergleich für die Tests.
     pub fn naechster_alle(&self, x: [f64; 3]) -> Naechster {
