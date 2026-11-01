@@ -219,6 +219,10 @@ pub struct Anordnung {
     pub hals_seitlich: [Punkt3; 2],
     /// L8, L9 Schulterpunkt links, rechts
     pub schulter: [Punkt3; 2],
+    /// L16, L17 Achsel (tiefster Punkt des Armlochs) links, rechts
+    pub achsel: [Punkt3; 2],
+    /// L18, L19 Brustpunkt links, rechts
+    pub brustpunkt: [Punkt3; 2],
     /// L49, L52 Ellbogen hinten links, rechts
     pub ellbogen: [Punkt3; 2],
 }
@@ -245,6 +249,8 @@ pub fn anordnung(ordner: &Path, netz: &Netz) -> Result<Anordnung, String> {
         hals_hinten: lm(5)?,
         hals_seitlich: [lm(6)?, lm(7)?],
         schulter: [lm(8)?, lm(9)?],
+        achsel: [lm(16)?, lm(17)?],
+        brustpunkt: [lm(18)?, lm(19)?],
         ellbogen: [lm(49)?, lm(52)?],
     })
 }
