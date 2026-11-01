@@ -7,10 +7,12 @@
 //! Stoffdreieck, gehalten (ohne Schwerkraft), dann ruhen mit voller
 //! Schwerkraft; die letzten 10 s der Ruhe sind die Haltephase (ADR-023).
 //! Ausgabe: Abstandskarte Stoff → Haut je Teil (Stufe 5, [`klon3d_sim::abstand`]),
-//! Dehnungskarte je Teil ([`klon3d_sim::dehnung`]), Nahtabstände je Naht,
+//! Dehnungskarte je Teil ([`klon3d_sim::dehnung`]), Spannungskarte je Teil in
+//! N/m ([`klon3d_sim::spannung`]), Nahtabstände je Naht,
 //! tiefster Punkt, auf Wunsch `koerper.obj`, `anfang.obj`, `ende.obj` (mm),
-//! `abstand.csv` und `dehnung.csv` in je einem Ordner, dazu mit `--farben`
-//! beide Karten als OBJ mit Farbe je Eckpunkt ([`klon3d_sim::farbkarte`]).
+//! `abstand.csv`, `dehnung.csv` und `spannung.csv` in je einem Ordner, dazu mit
+//! `--farben` alle Karten als OBJ mit Farbe je Eckpunkt
+//! ([`klon3d_sim::farbkarte`]).
 //!
 //! Mit `--zprj` kommt der Körper stattdessen aus CLOs Projekt: der `body` der
 //! `.avt` (Befund 119) und die Segment- und Landmarkenlisten aus CLOs
@@ -29,13 +31,14 @@ use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
 use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
 use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
 use klon3d_sim::{
-    abstand, ausgabe, dehnung, farbkarte, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz,
+    abstand, ausgabe, dehnung, farbkarte, messung, spannung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper,
+    Koerpernetz,
     Material, Simparameter, Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
 };
 
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
-                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
+                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--spannung <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
                       [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
@@ -61,8 +64,10 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut abstand_ordner: Option<PathBuf> = None;
     // Dehnungskarte (Stufe 5, Aufgabe #17): Ordner für `dehnung.csv`.
     let mut dehnung_ordner: Option<PathBuf> = None;
-    // Coloured maps as OBJ (stage 5, task #19): folder for `dehnung.obj` and
-    // `abstand.obj`.
+    // Spannungskarte (Stufe 5, Aufgabe #23): Ordner für `spannung.csv`.
+    let mut spannung_ordner: Option<PathBuf> = None;
+    // Coloured maps as OBJ (stage 5, tasks #19/#23): folder for `dehnung.obj`,
+    // `spannung.obj` and `abstand.obj`.
     let mut farben_ordner: Option<PathBuf> = None;
     let (mut anfang, mut bilder, mut zeiten): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
     let mut i = 0;
@@ -113,6 +118,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "--obj" => obj = Some(PathBuf::from(w)),
             "--abstand" => abstand_ordner = Some(PathBuf::from(w)),
             "--dehnung" => dehnung_ordner = Some(PathBuf::from(w)),
+            "--spannung" => spannung_ordner = Some(PathBuf::from(w)),
             "--farben" => farben_ordner = Some(PathBuf::from(w)),
             "--ordner" => resizing = PathBuf::from(w),
             "--naehbilder" => match w.parse() {
@@ -557,6 +563,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     // Ausgabe in Dateien.
     let karte_abstand = &karte_ende;
     let karte_dehnung = dehnung::Karte::messe(&s);
+    let karte_spannung = spannung::Karte::messe(&s);
     if let Some(k) = karte_abstand {
         println!();
         println!("  Abstand zur Haut, Endzustand:");
@@ -577,6 +584,25 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     if let Some((e, i)) = karte_dehnung.staerkste() {
         let t = s.teile.iter().find(|t| t.dreiecke.contains(&i)).map_or("?", |t| t.name.as_str());
         println!("  stärkste Dehnung Dreieck {i} ({t}): {:+.2} %", e * 100.0);
+    }
+    // Spannungskarte: dieselbe Geometrie, andere Zahl. Sie sagt, wie hart ein
+    // Teil zieht (N/m), nicht wie weit es gedehnt ist — der Unterschied wird
+    // sichtbar, sobald zwei Teile verschiedene Dicke und damit verschiedene
+    // Dehnsteifigkeit haben.
+    println!();
+    println!(
+        "  Spannung je Teil, Endzustand (Hauptkräfte in N/m, Zug positiv; über der 10-%-Linie des Materials zählt als über der linearen Reichweite):"
+    );
+    spannung_tabelle(&karte_spannung);
+    if let Some((w, i)) = karte_spannung.staerkste() {
+        let t = s.teile.iter().find(|t| t.dreiecke.contains(&i)).map_or("?", |t| t.name.as_str());
+        let e = karte_spannung.je_flaeche[i].steifigkeit_n_m;
+        println!("  stärkste Kraft Dreieck {i} ({t}): {w:.2} N/m (Dehnsteifigkeit {e:.1} N/m)");
+    }
+    if !spannung::reihenfolge_gleich(&karte_spannung, &karte_dehnung) {
+        // Nur bei gemischter Steifigkeit zu erwarten; bei einem Material wäre
+        // es ein Fehler in einer der beiden Karten.
+        println!("  Hinweis      die stärkste Kraft sitzt nicht auf dem stärksten Dehnungsdreieck — bei gemischten Dicken normal");
     }
     if let Some(o) = &abstand_ordner {
         // Ohne Körper gibt es keine Karte — dann wäre eine leere Datei eine
@@ -602,6 +628,18 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             o.display()
         );
     }
+    if let Some(o) = &spannung_ordner {
+        // Auch die Spannungskarte braucht nur Stoff, keinen Körper.
+        if let Err(e) =
+            std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("spannung.csv"), karte_spannung.csv(&s)))
+        {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        println!(
+            "  geschrieben  {} (spannung.csv: Dreieck, Teil, Ruhefläche in cm², beide Hauptkräfte in N/m, Dehnsteifigkeit)",
+            o.display()
+        );
+    }
     if let Some(o) = &obj {
         if let Err(e) = std::fs::write(o.join("ende.obj"), ausgabe::obj(&s)) {
             return fehler(format!("{}: {e}", o.display()));
@@ -609,14 +647,19 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         println!("  geschrieben  {} (koerper.obj, anfang.obj, ende.obj; mm)", o.display());
     }
     if let Some(o) = &farben_ordner {
-        // Beide Karten als OBJ mit Farbe je Eckpunkt. Dieselbe Geometrie wie
+        // Alle Karten als OBJ mit Farbe je Eckpunkt. Dieselbe Geometrie wie
         // `ende.obj`, nur mit drei Zahlen mehr je `v` — ein Betrachter, der
         // Eckpunktfarben kennt, zeigt die Karte ohne Umweg.
         let dehnung_pro_punkt = karte_dehnung.je_punkt(&s);
-        let dateien: [(&str, String); 2] = [
+        let spannung_pro_punkt = karte_spannung.je_punkt(&s);
+        let dateien: [(&str, String); 3] = [
             (
                 "dehnung.obj",
                 ausgabe::obj_farbig(&s, |i| farbkarte::dehnung(dehnung_pro_punkt[i])),
+            ),
+            (
+                "spannung.obj",
+                ausgabe::obj_farbig(&s, |i| farbkarte::spannung(spannung_pro_punkt[i])),
             ),
             (
                 "abstand.obj",
@@ -641,13 +684,15 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             }
         }
         println!(
-            "  geschrieben  {} (dehnung.obj, abstand.obj; mm, Farbe je Eckpunkt 0..255)",
+            "  geschrieben  {} (dehnung.obj, spannung.obj, abstand.obj; mm, Farbe je Eckpunkt 0..255)",
             o.display()
         );
         println!(
-            "  Farbskala   Dehnung {:.0}…{:.0} %, Abstand {:.0}…{:.0} mm (blau = wenig, rot = viel)",
+            "  Farbskala   Dehnung {:.0}…{:.0} %, Spannung {:.0}…{:.0} N/m, Abstand {:.0}…{:.0} mm (blau = wenig, rot = viel)",
             farbkarte::DEHNUNG_VON,
             farbkarte::DEHNUNG_BIS,
+            farbkarte::SPANNUNG_VON,
+            farbkarte::SPANNUNG_BIS,
             farbkarte::ABSTAND_VON,
             farbkarte::ABSTAND_BIS
         );
@@ -700,6 +745,41 @@ fn dehnung_tabelle(k: &dehnung::Karte) {
         g.max,
         k.gesamt_muster().median,
         ueber
+    );
+}
+
+/// Tabelle der Spannungskarte: eine Zeile je Teil, darunter die Summe.
+///
+/// Die Spalte „Grenze" ist die 10-%-Linie *dieses* Teils (Dehnsteifigkeit ×
+/// 0,10) und „über" zählt die Flächen darüber. Beides steht in der Zeile und
+/// nicht in einer Fußnote, weil die Grenze eine Eigenschaft des Materials ist
+/// und sich zwischen den Teilen unterscheidet, sobald die Dicken sich
+/// unterscheiden.
+fn spannung_tabelle(k: &spannung::Karte) {
+    println!("  Teil                                    Flächen  Fläche cm²      min  Median   90 %    max   Grenze   über");
+    let mut ueber = 0usize;
+    for t in &k.je_teil {
+        let v = &t.verteilung;
+        ueber += t.ueber;
+        println!(
+            "  {:<40} {:7} {:10.1} {:8.2} {:7.2} {:6.2} {:6.2} {:8.1} {:6}{}",
+            t.name,
+            t.flaechen,
+            t.ruheflaeche_m2 * 1e4,
+            v.min,
+            v.median,
+            v.p90,
+            v.max,
+            t.grenze_n_m,
+            t.ueber,
+            if t.ueber > 0 { "  ← über der linearen Reichweite" } else { "" }
+        );
+    }
+    let g = k.gesamt();
+    let flaeche: f64 = k.je_teil.iter().map(|t| t.ruheflaeche_m2).sum();
+    println!(
+        "  {:<40} {:7} {:10.1} {:8.2} {:7.2} {:6.2} {:6.2} {:8} {:6}",
+        "(alle)", g.anzahl, flaeche * 1e4, g.min, g.median, g.p90, g.max, "", ueber
     );
 }
 

@@ -20,6 +20,8 @@
 //!   mit Kennzahlen je Teil (Stufe 5);
 //! * [`dehnung`] — Dehnungskarte: Hauptdehnungen je Dreieck, mit Kennzahlen je
 //!   Teil (Stufe 5);
+//! * [`spannung`] — Spannungskarte: Hauptkräfte je Dreieck in N/m, gegen die
+//!   10-%-Linie des Materials (Stufe 5);
 //! * [`verteilung`] — die Kennzahlen, die beide Karten teilen;
 //! * [`farbkarte`] — Wert → Farbe für die Karten, feste Skala je Maß;
 //! * [`roehre`] — der Prüffall von Schritt 4a;
@@ -48,6 +50,7 @@ pub mod netzkoerper;
 pub mod platzierung;
 pub mod roehre;
 pub mod selbstkollision;
+pub mod spannung;
 pub mod szene;
 pub mod vergleich;
 pub mod vergleichskarte;
