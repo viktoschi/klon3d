@@ -72,6 +72,24 @@ pub const VERGLEICH_VON: f64 = 2.0;
 /// comparison is meant to expose.
 pub const VERGLEICH_BIS: f64 = 30.0;
 
+/// Stress scale: from this value (blue) to that value (red), in N/m of
+/// membrane force per width.
+///
+/// The upper bound is **35 N/m**, the 10 % line of
+/// `Latex_0.4mm_Radical_Rubber` (`348.274 N/m × 0.10 = 34.83`). `MATERIAL.md`
+/// calls latex almost linear up to 5–10 %, so a colour at the warm end means
+/// "this piece is at the limit its material profile documents" — a statement
+/// about the fabric, not about the run. The lower bound is 0: slack cloth pulls
+/// nothing, and there is no negative margin to show.
+///
+/// A different material has a different line (the Retifist preset: 3.3 N/m for
+/// 10 %), and this one constant cannot serve both. That is deliberate for now:
+/// the map prints its bounds with the run, and the per-piece table prints each
+/// piece's own threshold. A scale per material would be the next step and would
+/// need a run with mixed materials to be worth the extra parameter.
+pub const SPANNUNG_VON: f64 = 0.0;
+pub const SPANNUNG_BIS: f64 = 35.0;
+
 /// Colour for `wert` on the ramp between `von` and `bis`.
 ///
 /// Values outside the range are clamped to the end colours, so a map never
@@ -116,6 +134,11 @@ pub fn abstand(mm: f64) -> Rgb {
 /// colour, never a colour further up the ramp.
 pub fn vergleich(mm: f64) -> Rgb {
     farbe(mm, VERGLEICH_VON, VERGLEICH_BIS)
+}
+
+/// Colour of a membrane force in N/m, on [`SPANNUNG_VON`] … [`SPANNUNG_BIS`].
+pub fn spannung(n_m: f64) -> Rgb {
+    farbe(n_m, SPANNUNG_VON, SPANNUNG_BIS)
 }
 
 #[cfg(test)]
