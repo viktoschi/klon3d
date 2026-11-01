@@ -9,20 +9,35 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** steps 1–4 done. `src/muster.rs` loads a pattern into plain data (outlines, ear-clipping
-triangulation for the fill, layout, boundary edges, seam report with the numbers of `klon3d naehte`,
-errors as `Err(String)`, reader panics caught). `src/ansicht2d.rs` has the view math as plain functions
-(`Sicht`: world↔screen, fit, zoom about a point, pan; `treffer` point-in-polygon hit test; scale bar
-1-2-5) and the egui painting. `src/dateiwahl.rs` is the in-app file dialog (folder listing with filter,
-go up, path field with relative/absolute paths, `~`, Windows drive letters; `Dateiwahl::ui` returns
-`Antwort`). 23 unit tests green with `cargo +1.99 test --locked -p klon3d-app`. `src/main.rs` is still
-empty. Next: step 5, `src/app.rs` + `src/main.rs`.
+**2026-11-01:** steps 1–5 done. The window runs: `cargo +1.99 run --locked -p klon3d-app --
+crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
+lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `größte Abweichung N07L
+Δ -0.0737 cm` as `klon3d naehte` prints). Files:
+
+* `src/muster.rs` – pattern as plain data (outlines, ear-clipping triangulation, layout, boundary
+  edges, seam report, errors as `Err(String)`, reader panics caught).
+* `src/ansicht2d.rs` – view math as plain functions (`Sicht`, `treffer`, scale bar) and the painting;
+  refits on size changes until the user pans or zooms.
+* `src/dateiwahl.rs` – in-app file dialog.
+* `src/app.rs` – `App` (`eframe::App`): every command is an `Aktion` run at the end of the frame
+  (`App::ausfuehren`); shortcuts (Strg+O, Strg+Q, F, L, Tab/Umschalt+Tab, Esc – letters and Tab not
+  while a text field has focus or a dialog is open); drag and drop (.sm2d/.smis/.naehte); error and
+  help windows; theme and last folder saved under `klon3d.thema` / `klon3d.ordner`.
+* `src/menue.rs` – menu bar and toolbar; later entries disabled with hover "folgt in einer späteren
+  Aufgabe".
+* `src/panele.rs` – search field, piece list, seam list, properties panel, status bar.
+* `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500.
+
+25 unit tests green (`cargo +1.99 test --locked -p klon3d-app`), no warnings. Next: step 6,
+`tests/oberflaeche.rs` with egui_kittest (needs `egui_kittest = { version = "0.37", features =
+["eframe"] }` and a `Cargo.lock` update).
 
 Notes for the next steps: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use
 `›`, `–`, `Δ`, `≤`, `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is
 deprecated in 0.37 (`Id::unique`); panels are `egui::Panel::{top,bottom,left,right}(..).show(ui, ..)`.
-kittest's harness calls `ctx.set_theme(Dark)` *after* the app is built, so the app must apply its
-stored theme in `ui()`, not only in `App::neu`.
+kittest's harness calls `ctx.set_theme(Dark)` *after* the app is built, so the app applies its
+stored theme in `ui()`, not only in `App::neu`. Dropping an `egui::FullOutput` with texture deltas
+panics in debug builds (`out.textures_delta.clear()`).
 
 ## Goal (from #34)
 
@@ -69,7 +84,7 @@ seam deviation, last message.
 - [x] 2. `muster.rs` with unit tests (Bluse3 v2: pieces, seams, Δ equal to `pruefe_naehte`)
 - [x] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
 - [x] 4. `dateiwahl.rs`
-- [ ] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
+- [x] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
 - [ ] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
 - [ ] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
@@ -91,7 +106,9 @@ rustup toolchain install 1.99 --profile minimal      # the default 1.97 is too o
 cargo +1.99 build --locked -p klon3d-app --all-targets
 # software Vulkan (lavapipe) and EGL, for screenshots and GPU tests without a graphics card
 apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers libegl1 libegl-mesa0
-# a real window: Xvfb + ImageMagick (both preinstalled in the cloud image used on 2026-11-01)
+# a real window: Xvfb + ImageMagick (both preinstalled in the cloud image used on 2026-11-01);
+# winit's X11 backend also needs libxkbcommon-x11 (not preinstalled there)
+apt-get install -y --no-install-recommends libxkbcommon-x11-0
 xvfb-run -s "-screen 0 1600x1000x24" sh -c 'target/debug/klon3d-app crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d & sleep 8; import -window root bild.png'
 ```
 

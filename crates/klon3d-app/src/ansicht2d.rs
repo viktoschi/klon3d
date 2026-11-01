@@ -187,6 +187,10 @@ pub struct Ansicht2d {
     /// Highlight the edges used by the seam list.
     pub naehte_zeigen: bool,
     einpassen_bitte: bool,
+    /// Fit again when the view changes its size – until the user pans or zooms. The first
+    /// frames do not have the final size yet (side panels settle), and a window resize should
+    /// keep a fitted pattern fitted.
+    folgt_groesse: bool,
     /// Size of the view in the last frame.
     pub groesse: Vec2,
 }
@@ -199,6 +203,7 @@ impl Default for Ansicht2d {
             ausgelegt: true,
             naehte_zeigen: true,
             einpassen_bitte: true,
+            folgt_groesse: true,
             groesse: Vec2::ZERO,
         }
     }
@@ -275,6 +280,7 @@ impl Ansicht2d {
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "2D-Ansicht"));
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
+        let groesse_neu = (self.groesse - rect.size()).length() > 0.5;
         self.groesse = rect.size();
 
         let Some(muster) = muster else {
@@ -291,11 +297,12 @@ impl Ansicht2d {
             return None;
         };
         let (breite, hoehe) = (rect.width() as f64, rect.height() as f64);
-        if self.einpassen_bitte || self.sicht.is_none() {
+        if self.einpassen_bitte || self.sicht.is_none() || (groesse_neu && self.folgt_groesse) {
             let s = Sicht::eingepasst(huelle, breite, hoehe, EINPASS_RAND);
             self.einpass_zoom = s.zoom;
             self.sicht = Some(s);
             self.einpassen_bitte = false;
+            self.folgt_groesse = true;
         }
         let grenzen = zoom_grenzen(self.einpass_zoom);
         let mut sicht = self.sicht.unwrap();
@@ -303,7 +310,10 @@ impl Ansicht2d {
         // Pointer: pan, zoom, click.
         if resp.dragged() {
             let d = resp.drag_delta();
-            sicht.schieben(d.x as f64, d.y as f64);
+            if d != Vec2::ZERO {
+                sicht.schieben(d.x as f64, d.y as f64);
+                self.folgt_groesse = false;
+            }
         }
         let mut klick = None;
         if let Some(maus) = resp.hover_pos() {
@@ -312,6 +322,7 @@ impl Ansicht2d {
             if (faktor - 1.0).abs() > 1e-6 {
                 let m = maus - rect.min;
                 sicht.zoom_um(faktor, m.x as f64, m.y as f64, grenzen);
+                self.folgt_groesse = false;
             }
         }
         if resp.clicked() {
