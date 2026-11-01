@@ -9,9 +9,8 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** issue #34 created and claimed. The crate skeleton is committed (`0a4114f`: workspace member,
-dependencies, empty `main`, `Cargo.lock` with additions only). Nothing of the application is written yet.
-A first build of the skeleton was still compiling when this note was written – step 1 checks it.
+**2026-11-01:** step 1 done – the skeleton builds with `cargo +1.99 build --locked -p klon3d-app
+--all-targets` (the default 1.97 toolchain cannot build the workspace). Next: step 2, `src/muster.rs`.
 
 ## Goal (from #34)
 
@@ -54,7 +53,7 @@ seam deviation, last message.
 ## Steps
 
 - [x] 0. Issue #34 created, claimed, no overlap with #33 or open PRs; skeleton committed
-- [ ] 1. Build the skeleton: `cargo build --locked -p klon3d-app --all-targets` (see environment below)
+- [x] 1. Build the skeleton: `cargo build --locked -p klon3d-app --all-targets` (see environment below)
 - [ ] 2. `muster.rs` with unit tests (Bluse3 v2: pieces, seams, Δ equal to `pruefe_naehte`)
 - [ ] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
 - [ ] 4. `dateiwahl.rs`
