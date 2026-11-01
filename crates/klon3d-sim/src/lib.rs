@@ -43,6 +43,7 @@ pub mod cpu;
 pub mod dehnung;
 pub mod faerbung;
 pub mod farbkarte;
+pub mod gpu;
 pub mod implizit;
 pub mod klebung;
 pub mod koerper;
@@ -60,7 +61,8 @@ pub mod vergleichskarte;
 pub mod verteilung;
 
 pub use cpu::{CpuReferenz, Rechenweg};
-pub use implizit::{ImplizitCg, ImplizitParameter};
+pub use gpu::GpuLoeser;
+pub use implizit::{CgLauf, CpuLoeser, ImplizitCg, ImplizitParameter, Loeser};
 pub use koerper::Koerper;
 pub use netzkoerper::Koerpernetz;
 pub use material::{Material, RADICAL_RUBBER_04, RETIFIST_NR_040};

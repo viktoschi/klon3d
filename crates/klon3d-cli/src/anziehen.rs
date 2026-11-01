@@ -41,7 +41,7 @@ use klon3d_sim::{
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
                       [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--spannung <ordner>] [--nahtlage <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
-                      [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
+                      [--rechenweg implizit|gpu|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
     eprintln!("{m}");
@@ -60,6 +60,8 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut material: Material = RADICAL_RUBBER_04;
     let mut offen_zeigen = false;
     let mut xpbd = false;
+    // Step 4b: the same implicit step, solved on the GPU.
+    let mut gpu = false;
     let mut selbstkollision = false;
     let mut schnitte_an_naehten = false;
     // Abstandskarte Stoff → Haut (Stufe 5): Ordner für `abstand.csv`.
@@ -135,9 +137,16 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
                 Err(_) => return fehler(format!("--einschwingen-min {w:?}: keine Zahl")),
             },
             "--rechenweg" => match w.as_str() {
-                "implizit" => xpbd = false,
+                "implizit" => {
+                    xpbd = false;
+                    gpu = false;
+                }
+                "gpu" => {
+                    xpbd = false;
+                    gpu = true;
+                }
                 "xpbd" => xpbd = true,
-                _ => return fehler(format!("--rechenweg {w:?}: implizit oder xpbd")),
+                _ => return fehler(format!("--rechenweg {w:?}: implizit, gpu oder xpbd")),
             },
             "--anfang" => anfang = Some(PathBuf::from(w)),
             "--bilder" => bilder = Some(PathBuf::from(w)),
@@ -435,7 +444,17 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         rechnen(&mut s, &mut CpuReferenz::neu(), &ablauf, bilder.as_deref(), &|_| (0, 0, 0))
     } else {
         let st = |rw: &ImplizitCg| (rw.statistik.loesungen, rw.statistik.cg_iterationen, rw.statistik.nicht_konvergiert);
-        let mut rw = ImplizitCg::neu(ImplizitParameter { selbstkollision, selbst_schnitte_an_naehten: schnitte_an_naehten, ..ImplizitParameter::default() });
+        let param = ImplizitParameter { selbstkollision, selbst_schnitte_an_naehten: schnitte_an_naehten, ..ImplizitParameter::default() };
+        let mut rw = if gpu {
+            let loeser = match klon3d_sim::GpuLoeser::neu() {
+                Ok(l) => l,
+                Err(e) => return fehler(format!("GPU: {e} (ohne --rechenweg gpu rechnet die CPU)")),
+            };
+            println!("  Rechenweg    GPU (f32, wgpu) auf {}", loeser.geraet());
+            ImplizitCg::mit_loeser(param, Box::new(loeser))
+        } else {
+            ImplizitCg::neu(param)
+        };
         let l = rechnen(&mut s, &mut rw, &ablauf, bilder.as_deref(), &st);
         if selbstkollision {
             selbst_letztes = Some((rw.statistik.naehe_punkt_dreieck, rw.statistik.naehe_kante_kante, rw.statistik.selbst_stoesse));

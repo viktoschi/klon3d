@@ -228,6 +228,62 @@ includes **motion** (stage 7), and that needs the computing power of the GPU.
 | **4c Placement** | place the 2D pieces around the body before sewing. CLO puts them on arrangement points on hull bodies around torso, arms and legs (finding 71, addendum); klon3d needs its own simple approach, e.g. zone and side per piece (in the seam list or a separate file) and cylinders or ellipses from the body measurements of stage 2. Then the seam constraints pull the pieces together. **Built** (`platzierung.rs`, placement file `<pattern>.lage`, `klon3d anziehen`): vertical torso prism from the convex hull of the torso points, around the arm the cross-section hull per centimeter, neck seam with height and radius per angle from the four landmarks (slanted, not a horizontal circle; finding 121); per piece: zone, reference point (also from another piece of the same block), circumferential position in degrees or cm, height at a reference height, `gespiegelt` (mirrored), `drehung` (rotation), `abstand` (offset) | all pieces of Bluse3 v2 lie around the body without penetration, the seams close. **Largely done** (findings 95, 96): 16 sewn pieces placed (12 glued-on ones are missing until glue zones exist); dressed with a limited sewing speed (0.1 m/s) and body vertex against cloth triangle during sewing, around the arm a length-preserving arm prism: no point inside the skin, every seam median < 0.8 mm, **98.6% of seam pairs ≤ 10 mm**, 18 of 24 seams fully closed (finding 95 without both: 92.4%). **Generality** (finding 98): Bluse1 v25 and bustier v1 as further test patterns, all three with the same settings — sewn while held (without gravity), cloth points pushed out of the skin beforehand, seam spring 2,000 N/m during dressing, thickness per piece (`dicke` in the placement file), then 2 s of settling and a 10 s hold phase under full gravity (ADR-023): **Bluse3 99.4%, Bluse1 99.1%, bustier 94.6%**, no piece sinks more than 0.4 mm. Finding 100: Bolero v37 96.5% (pleats as darts), skirt v36 95.1% (holds, but not fully at rest: flared panels overlap on the vertical prism); finding 101: seam list and placement **automatic** (`klon3d naehte --vorschlag`, `klon3d lage`); dressed entirely without hand-written files, all five hold (Bluse3 98.6%, Bluse1 98.0%, bustier 96.0%, bolero without sleeves 96.0%, skirt 95.7% — the skirt reacts chaotically to tenths of a millimeter in the initial placement); the placement suggestion lies 0.3–2.8 cm off the hand-made placements. Finding 102: the unrest came from truncated CG solves (50 iterations); with up to 600 iterations during dressing, a torso hull that widens under flared panels, and settling until at rest (2–20 s) before the hold phase: **Bluse3 98.9%, Bluse1 98.9%, bustier 93.6%, bolero 94.5%, skirt 99.2%** with hand-written files, all hold (±0.2 mm), the skirt is insensitive to the initial placement; computing time up to three times longer. Open: corners (sleeve hem, collar end, cup attachments), zones for legs and head, gaps in the pattern reader (`cutArc`, `pointOfIntersectionArcs`, `pointOfIntersectionCurves`, curve names with an underscore) |
 | **4d Test blouse v26 standing** | the whole blouse on the shaped body from `klon3d koerper` | acceptance criterion below; in addition "holds" per ADR-023: after dressing ≥ 10 s of full gravity, no piece sinks more than 5 mm, nothing pinned |
 
+**Status of 4b (task #27): the CG solve runs on the GPU, and it is not yet
+faster.** `gpu.rs` solves `A·Δv = b` with the same matrix-free PCG in `f32`: the
+operator over edges, seams and bending gathered per point over a neighbour
+list, the block-Jacobi preconditioner, the contact filter, fixed-order
+reductions, warm start and the same stopping rule. It runs as **one compute
+shader** (one workgroup, `workgroupBarrier` between phases): a dispatch per
+phase needs about 40 µs on this machine, which is already the length of a CPU
+iteration, and five of them per iteration lost against the CPU before the
+shader was written.
+
+What is proven (tests, `cargo test --release -p klon3d-sim --test gpu`, all
+green on the RTX 3090, and skipped without an adapter):
+
+* `A·p` of the same system agrees with the CPU operator to **1e-4 relative**
+  (constant, random and velocity vector);
+* the tube with 5.5 % Radical reaches the **same equilibrium** as `ImplizitCg`
+  (circumference strain within 0.02 pp, seam gap < 1 mm, radius per point
+  within 0.05 mm);
+* the slip test follows the discrete path within 2 %;
+* without a body, both backends shrink the tube to the same minimum (largest
+  point distance 1e-5 m).
+
+What it costs and what it yields, measured on Bluse3 v2 on the CLO body
+(`japanese_school_uniform.zprj`), full settings, `klon3d anziehen [--rechenweg
+gpu]`:
+
+| | CPU (`f64`) | GPU (`f32`, wgpu) |
+|---|---|---|
+| frame, sewing | 403 ms | 613 ms |
+| frame, settling | 342 ms | 557 ms |
+| frame, holding | 334 ms | 563 ms |
+| CG iterations per solve | 122 | 135 |
+| solves that did not converge | 0 of 9 792 | 1 of 9 792 |
+| `ende.obj` against the CPU run | - | median 0.85 mm, mean 2.14 mm, max 22.4 mm |
+
+The CPU run of the same command under this change is **byte-identical** to the
+reference of task #25 (`E86DDF85…`): the step itself did not change, only who
+solves the linear system. The GPU state is within the 2 mm noise floor of the
+comparison map in the median and the mean; the tail differs, which is what the
+last bits of `f32` do on a frictional garment.
+
+So the 30 fps criterion is **not** reached, and the reason is structural: 5 538
+points are too few to fill the card, and one workgroup is latency-bound at
+about 0.4 ms per iteration, while the CPU needs about 0.25 ms. More parallelism
+means more dispatches, and each dispatch costs more than the work. The next
+step is therefore not "more GPU" but fewer iterations (a better
+preconditioner, finding 35 section 5) or a different structure (multigrid,
+several workgroups with one synchronisation per chunk).
+
+
+Not in this slice: forces, contact distance queries, the penetration push,
+friction and the release pass stay on the CPU (they are geometry queries);
+springs of glue zones and self-collision go to the CPU backend and are counted
+(`GpuLoeser::ausweichungen`) instead of being dropped; self-collision is not on
+the GPU; nothing is claimed about bodies at height or moving bodies.
+
 | Constant | Meaning |
 |---|---|
 | Distance | distance constraint, stiff for woven fabric, soft for latex |
