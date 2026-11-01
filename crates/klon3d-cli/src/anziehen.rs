@@ -7,8 +7,9 @@
 //! Stoffdreieck, gehalten (ohne Schwerkraft), dann ruhen mit voller
 //! Schwerkraft; die letzten 10 s der Ruhe sind die Haltephase (ADR-023).
 //! Ausgabe: Abstandskarte Stoff → Haut je Teil (Stufe 5, [`klon3d_sim::abstand`]),
-//! Nahtabstände je Naht, tiefster Punkt, auf Wunsch `koerper.obj`,
-//! `anfang.obj`, `ende.obj` (mm) und `abstand.csv` in je einem Ordner.
+//! Dehnungskarte je Teil ([`klon3d_sim::dehnung`]), Nahtabstände je Naht,
+//! tiefster Punkt, auf Wunsch `koerper.obj`, `anfang.obj`, `ende.obj` (mm),
+//! `abstand.csv` und `dehnung.csv` in je einem Ordner.
 //!
 //! Mit `--zprj` kommt der Körper stattdessen aus CLOs Projekt: der `body` der
 //! `.avt` (Befund 119) und die Segment- und Landmarkenlisten aus CLOs
@@ -27,13 +28,13 @@ use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
 use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
 use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
 use klon3d_sim::{
-    abstand, ausgabe, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material, Simparameter,
-    Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
+    abstand, ausgabe, dehnung, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material,
+    Simparameter, Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
 };
 
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
-                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--ordner <Resizing>] \
+                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--ordner <Resizing>] \
                       [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
@@ -57,6 +58,8 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut schnitte_an_naehten = false;
     // Abstandskarte Stoff → Haut (Stufe 5): Ordner für `abstand.csv`.
     let mut abstand_ordner: Option<PathBuf> = None;
+    // Dehnungskarte (Stufe 5, Aufgabe #17): Ordner für `dehnung.csv`.
+    let mut dehnung_ordner: Option<PathBuf> = None;
     let (mut anfang, mut bilder, mut zeiten): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
     let mut i = 0;
     while i < args.len() {
@@ -105,6 +108,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "--gegen-lage" => gegen_lage = Some(PathBuf::from(w)),
             "--obj" => obj = Some(PathBuf::from(w)),
             "--abstand" => abstand_ordner = Some(PathBuf::from(w)),
+            "--dehnung" => dehnung_ordner = Some(PathBuf::from(w)),
             "--ordner" => resizing = PathBuf::from(w),
             "--naehbilder" => match w.parse() {
                 Ok(n) => ablauf.naehbilder = n,
@@ -546,7 +550,9 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     // Abstandskarte am Endzustand: der eigentliche Zweck der Stufe 5. Sie
     // erscheint auch ohne `--obj`, weil sie zum Lauf gehört und nicht zur
     // Ausgabe in Dateien.
-    if let Some(k) = &karte_ende {
+    let karte_abstand = &karte_ende;
+    let karte_dehnung = dehnung::Karte::messe(&s);
+    if let Some(k) = karte_abstand {
         println!();
         println!("  Abstand zur Haut, Endzustand:");
         abstand_tabelle(k);
@@ -554,6 +560,18 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             let t = s.teile.iter().find(|t| t.punkte.contains(&i)).map_or("?", |t| t.name.as_str());
             println!("  tiefster Punkt {i} ({t}): {:+.1} mm", d * 1e3);
         }
+    }
+    // Dehnungskarte: der zweite Ausgabewert der Stufe 5. Sie braucht keinen
+    // Körper — Dehnung ist eine Eigenschaft des Stoffs allein.
+    println!();
+    println!(
+        "  Dehnung je Teil, Endzustand (Hauptrichtungen, gegen Ruhelänge × (1 − Reduktion); über {:.0} % zählt als überdehnt):",
+        dehnung::UEBER_DEHNUNG * 100.0
+    );
+    dehnung_tabelle(&karte_dehnung);
+    if let Some((e, i)) = karte_dehnung.staerkste() {
+        let t = s.teile.iter().find(|t| t.dreiecke.contains(&i)).map_or("?", |t| t.name.as_str());
+        println!("  stärkste Dehnung Dreieck {i} ({t}): {:+.2} %", e * 100.0);
     }
     if let Some(o) = &abstand_ordner {
         // Ohne Körper gibt es keine Karte — dann wäre eine leere Datei eine
@@ -566,6 +584,19 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         }
         println!("  geschrieben  {} (abstand.csv: Punkt, Teil, Lage in cm, Abstand in mm, Normale)", o.display());
     }
+    if let Some(o) = &dehnung_ordner {
+        // Die Dehnungskarte braucht keinen Körper, nur Stoff — hier gibt es
+        // also keinen Grund für einen Fehler.
+        if let Err(e) =
+            std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("dehnung.csv"), karte_dehnung.csv(&s)))
+        {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        println!(
+            "  geschrieben  {} (dehnung.csv: Dreieck, Teil, Ruhefläche in cm², beide Hauptdehnungen in %, Muster)",
+            o.display()
+        );
+    }
     if let Some(o) = &obj {
         if let Err(e) = std::fs::write(o.join("ende.obj"), ausgabe::obj(&s)) {
             return fehler(format!("{}: {e}", o.display()));
@@ -573,6 +604,54 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
         println!("  geschrieben  {} (koerper.obj, anfang.obj, ende.obj; mm)", o.display());
     }
     ExitCode::SUCCESS
+}
+
+/// Tabelle der Dehnungskarte: eine Zeile je Teil, darunter die Summe.
+///
+/// Die Spalten `min … max` sind die größere Hauptdehnung gegen die reduzierte
+/// Ruhelänge. `Muster` ist derselbe Wert gegen das unveränderte Schnittmuster:
+/// bei einem Teil, das mit 5,5 % Reduktion geschnitten wurde und in der
+/// Ruhelage auf Musterlänge sitzt, steht dort 0, während die Ruhespalte 5,82 %
+/// zeigt. Beide Zahlen sind richtig, sie beantworten nur verschiedene Fragen.
+///
+/// `über` zählt die Dreiecke über [`dehnung::UEBER_DEHNUNG`]; das ist die
+/// Zahl, die den Fehler benennt, und nicht das Etikett.
+fn dehnung_tabelle(k: &dehnung::Karte) {
+    println!(
+        "  Teil                                    Flächen  Fläche cm²      min  Median   90 %    max  Muster-Median   über"
+    );
+    let mut ueber = 0usize;
+    for t in &k.je_teil {
+        let v = &t.verteilung;
+        ueber += t.ueber;
+        println!(
+            "  {:<40} {:7} {:10.1} {:8.2} {:7.2} {:6.2} {:6.2} {:13.2} {:6}{}",
+            t.name,
+            t.flaechen,
+            t.ruheflaeche_m2 * 1e4,
+            v.min,
+            v.median,
+            v.p90,
+            v.max,
+            t.muster.median,
+            t.ueber,
+            if t.ueber > 0 { "  ← überdehnt" } else { "" }
+        );
+    }
+    let g = k.gesamt();
+    let flaeche: f64 = k.je_teil.iter().map(|t| t.ruheflaeche_m2).sum();
+    println!(
+        "  {:<40} {:7} {:10.1} {:8.2} {:7.2} {:6.2} {:6.2} {:13.2} {:6}",
+        "(alle)",
+        g.anzahl,
+        flaeche * 1e4,
+        g.min,
+        g.median,
+        g.p90,
+        g.max,
+        k.gesamt_muster().median,
+        ueber
+    );
 }
 
 /// Tabelle der Abstandskarte: eine Zeile je Teil, darunter die Summe.

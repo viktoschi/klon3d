@@ -300,7 +300,7 @@ This is the actual purpose, not the display:
 
 | Output | Shows |
 |---|---|
-| Strain map | percent strain per face relative to the pattern |
+| Strain map | **done for the measure** (`dehnung`, #17): principal strains per face, engineering strain `λ − 1`, in two frames — against the rest shape the solver uses (pattern × `1 − r`) and against the pattern itself, `(1 + e)(1 − r) − 1`; per-piece table in `anziehen` (faces, rest area, min/median/p90/max, count above 10 %, pattern median), full map as `dehnung.csv` via `--dehnung <dir>`. Colouring and per-frame output still open. Bluse3 v2 after the run: median 0.87 %, 90 % 10.0 %, 942 of 9 435 faces above 10 % (sleeve and side panel), 0 % of the front and cup pieces above. Exact checks without data: a flat piece at 12 % reads exactly 12 %, rest area = pattern area × `(1 − r)²` to 1e-12 |
 | Distance map | **done for the measure** (`abstand`, #15): signed distance cloth point → skin surface, outside positive, with the nearest skin point and its normal; per-piece table in `anziehen` (min/median/p90/max/count inside), full map as `abstand.csv` via `--abstand <dir>`. Colouring and per-frame output still open. Bluse3 v2 after the run: min +0.2 mm, median 2.4 mm, max 36.6 mm, 0 of 5 538 points inside the skin. Cross-check on the reference garment mesh: median 20.4 mm, min 4.3 mm, 0 inside, 88 718 points in 0.6 s |
 | Seam position | seams against body points (armpit, shoulder point, bust point) |
 | Stress map | where the material pulls |

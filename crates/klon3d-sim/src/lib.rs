@@ -18,6 +18,9 @@
 //! * [`messung`] — Umfang, Dehnung, Nahtspalt, Energie;
 //! * [`abstand`] — Abstandskarte Stoff → Haut: vorzeichenbehaftet je Punkt,
 //!   mit Kennzahlen je Teil (Stufe 5);
+//! * [`dehnung`] — Dehnungskarte: Hauptdehnungen je Dreieck, mit Kennzahlen je
+//!   Teil (Stufe 5);
+//! * [`verteilung`] — die Kennzahlen, die beide Karten teilen;
 //! * [`roehre`] — der Prüffall von Schritt 4a;
 //! * [`selbstkollision`] - Stoff gegen Stoff wie CLO (Befund 116):
 //!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
@@ -30,6 +33,7 @@
 pub mod abstand;
 pub mod ausgabe;
 pub mod cpu;
+pub mod dehnung;
 pub mod faerbung;
 pub mod implizit;
 pub mod klebung;
@@ -42,6 +46,7 @@ pub mod roehre;
 pub mod selbstkollision;
 pub mod szene;
 pub mod vergleich;
+pub mod verteilung;
 
 pub use cpu::{CpuReferenz, Rechenweg};
 pub use implizit::{ImplizitCg, ImplizitParameter};
