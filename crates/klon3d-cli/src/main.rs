@@ -136,14 +136,16 @@ fn hilfe() {
       250 Bilder Ruhe, mit Schwerkraft; meldet die Nahtabstaende je Naht;
       --obj schreibt koerper.obj, anfang.obj und ende.obj (mm)
 
-  klon3d vergleich <a.obj> <b.obj> [--zelle <mm>] [--csv <datei>]
+  klon3d vergleich <a.obj> <b.obj> [--zelle <mm>] [--csv <datei>] [--farben <ordner>]
       stellt zwei Netze gegeneinander (Stufe 5): Abstand jedes Knotens zur
       FLAECHE des anderen Netzes, in beide Richtungen - nicht ueber gleiche
       Punktnummern, weil die Vernetzung nichts ueber die Simulation sagt.
       Meldet je Richtung Anzahl, Mittel, Median, 90 %, 99 % und den groessten
       Einzelwert (mm), dazu den Median je Gruppe, wenn beide Netze
       Gruppennamen tragen (o/g im OBJ); --csv schreibt die Abstaende je
-      Knoten, --zelle ist die Kantenlaenge des Suchgitters (Vorgabe 20 mm)
+      Knoten, --zelle ist die Kantenlaenge des Suchgitters (Vorgabe 20 mm),
+      --farben schreibt beide Netze als OBJ mit Farbe je Eckpunkt (mm; blau
+      bis 2 mm, im Rauschen des Vergleichs, rot ab 30 mm)
 "
     );
 }
@@ -2047,14 +2049,19 @@ fn befehl_zprj(args: &[String]) -> ExitCode {
 /// Vergleichsmaßstab aus `PLAN.md`: nicht über gleiche Punktnummern, und
 /// wegen der Ausreißer der Median neben dem Mittel.
 ///
+/// Mit `--farben` kommt die Anzeige dazu: beide Netze als OBJ mit einer Farbe
+/// je Eckpunkt ([`klon3d_sim::vergleichskarte`]), Skala aus
+/// [`klon3d_sim::farbkarte`].
+///
 /// Rückgabe 1, wenn ein Netz nicht lesbar ist oder keine Dreiecke hat.
 fn befehl_vergleich(args: &[String]) -> ExitCode {
     use klon3d_sim::vergleich::{Netz, Vergleich};
     const AUFRUF: &str =
-        "Aufruf: klon3d vergleich <a.obj> <b.obj> [--zelle <mm>] [--csv <datei>]";
+        "Aufruf: klon3d vergleich <a.obj> <b.obj> [--zelle <mm>] [--csv <datei>] [--farben <ordner>]";
     let (mut a, mut b) = (None::<PathBuf>, None::<PathBuf>);
     let mut zelle = 20.0f64;
     let mut csv: Option<PathBuf> = None;
+    let mut farben: Option<PathBuf> = None;
     let mut it = args.iter();
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -2069,6 +2076,13 @@ fn befehl_vergleich(args: &[String]) -> ExitCode {
                 Some(w) => csv = Some(PathBuf::from(w)),
                 None => {
                     eprintln!("--csv braucht einen Dateinamen\n{AUFRUF}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--farben" => match it.next() {
+                Some(w) => farben = Some(PathBuf::from(w)),
+                None => {
+                    eprintln!("--farben braucht einen Ordner\n{AUFRUF}");
                     return ExitCode::FAILURE;
                 }
             },
@@ -2160,6 +2174,37 @@ fn befehl_vergleich(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
         println!("\nAbstaende je Knoten: {}", ziel.display());
+    }
+
+    if let Some(o) = farben {
+        // Beide Richtungen als OBJ mit Farbe je Eckpunkt: dieselbe Geometrie
+        // wie die Eingaben, nur drei Zahlen mehr je `v`. A gegen b zeigt, wo b
+        // von a abweicht, b gegen a die Gegenrichtung - ein Netz kann feiner
+        // sein als das andere, eine Richtung allein verschweigt das.
+        use klon3d_sim::vergleichskarte::obj_farbig;
+        if let Err(e) = std::fs::create_dir_all(&o) {
+            eprintln!("{}: {e}", o.display());
+            return ExitCode::FAILURE;
+        }
+        let dateien = [
+            ("a_zu_b.obj", obj_farbig(&na, &v.a_zu_b)),
+            ("b_zu_a.obj", obj_farbig(&nb, &v.b_zu_a)),
+        ];
+        for (name, text) in dateien {
+            let ziel = o.join(name);
+            if let Err(e) = std::fs::write(&ziel, text) {
+                eprintln!("{}: {e}", ziel.display());
+                return ExitCode::FAILURE;
+            }
+        }
+        println!("\nVergleichskarte: {}", o.display());
+        println!("  a_zu_b.obj  Knoten von a, Farbe = Abstand zur Flaeche von b");
+        println!("  b_zu_a.obj  Knoten von b, Farbe = Abstand zur Flaeche von a");
+        println!(
+            "  Farbskala   {:.1}…{:.0} mm (blau = im Rauschen des Vergleichs, rot = Abweichung)",
+            klon3d_sim::farbkarte::VERGLEICH_VON,
+            klon3d_sim::farbkarte::VERGLEICH_BIS
+        );
     }
     ExitCode::SUCCESS
 }

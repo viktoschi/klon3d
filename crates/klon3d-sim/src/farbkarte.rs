@@ -48,6 +48,30 @@ pub const DEHNUNG_BIS: f64 = 20.0;
 pub const ABSTAND_VON: f64 = 0.0;
 pub const ABSTAND_BIS: f64 = 30.0;
 
+/// Comparison scale: from this value (blue) to that value (red), in mm of
+/// surface distance between two meshes.
+///
+/// The lower bound is **not** zero, and that is the point: a difference below
+/// [`VERGLEICH_VON`] cannot be told apart from the scatter of the reference
+/// implementation itself. Measured on the one comparison where it could be
+/// measured — the same project computed twice with a different fabric — the
+/// surface distance had a median of **2.14 mm** (90 % 9.49, max 58.05) between
+/// two runs that differ only in the fabric. So the ramp starts at 2 mm:
+/// everything at or below reads as the cold end colour, which says "inside the
+/// noise, no statement", and only above it does the map claim a deviation.
+///
+/// That 2 mm is a **judgement from one measurement**, not a universal
+/// constant. A comparison on another garment, another pose or another mesh
+/// resolution has its own scatter, and the map would need its own floor. The
+/// value is printed with the run so that the reader sees which floor is in
+/// effect.
+pub const VERGLEICH_VON: f64 = 2.0;
+
+/// Upper end of the comparison scale, in mm. 30 mm is the same reading as the
+/// distance map: a sleeve cap standing off the arm by that much is the fault a
+/// comparison is meant to expose.
+pub const VERGLEICH_BIS: f64 = 30.0;
+
 /// Colour for `wert` on the ramp between `von` and `bis`.
 ///
 /// Values outside the range are clamped to the end colours, so a map never
@@ -83,6 +107,15 @@ pub fn dehnung(prozent: f64) -> Rgb {
 /// Colour of a distance value in mm, on [`ABSTAND_VON`] … [`ABSTAND_BIS`].
 pub fn abstand(mm: f64) -> Rgb {
     farbe(mm, ABSTAND_VON, ABSTAND_BIS)
+}
+
+/// Colour of a surface distance between two meshes, in mm, on
+/// [`VERGLEICH_VON`] … [`VERGLEICH_BIS`].
+///
+/// Below the lower bound — inside the scatter of the reference — the cold end
+/// colour, never a colour further up the ramp.
+pub fn vergleich(mm: f64) -> Rgb {
+    farbe(mm, VERGLEICH_VON, VERGLEICH_BIS)
 }
 
 #[cfg(test)]
