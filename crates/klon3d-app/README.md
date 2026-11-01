@@ -9,11 +9,16 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** steps 1–2 done. `src/muster.rs` loads a pattern into plain data (outlines, ear-clipping
+**2026-11-01:** steps 1–3 done. `src/muster.rs` loads a pattern into plain data (outlines, ear-clipping
 triangulation for the fill, layout, boundary edges, seam report with the numbers of `klon3d naehte`,
-errors as `Err(String)`, reader panics caught); 11 unit tests green with
-`cargo +1.99 test --locked -p klon3d-app`. `src/lib.rs` declares the modules; `src/main.rs` is still
-empty. Next: step 3, `src/ansicht2d.rs`.
+errors as `Err(String)`, reader panics caught). `src/ansicht2d.rs` has the view math as plain functions
+(`Sicht`: world↔screen, fit, zoom about a point, pan; `treffer` point-in-polygon hit test; scale bar
+1-2-5) and the egui painting (filled pieces, labels, seam edges coloured by `Kantenart`, selected seam,
+scale bar). 18 unit tests green with `cargo +1.99 test --locked -p klon3d-app`. `src/main.rs` is still
+empty. Next: step 4, `src/dateiwahl.rs`.
+
+Note: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
+`·`, `×`, `…` only (kittest panics on a missing glyph).
 
 ## Goal (from #34)
 
@@ -58,7 +63,7 @@ seam deviation, last message.
 - [x] 0. Issue #34 created, claimed, no overlap with #33 or open PRs; skeleton committed
 - [x] 1. Build the skeleton: `cargo build --locked -p klon3d-app --all-targets` (see environment below)
 - [x] 2. `muster.rs` with unit tests (Bluse3 v2: pieces, seams, Δ equal to `pruefe_naehte`)
-- [ ] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
+- [x] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
 - [ ] 4. `dateiwahl.rs`
 - [ ] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
 - [ ] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`

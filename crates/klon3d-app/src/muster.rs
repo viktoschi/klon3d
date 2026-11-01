@@ -307,7 +307,7 @@ impl Muster {
 pub fn massdatei_des_musters(muster_pfad: &Path, muster: &Pattern) -> Result<PathBuf, String> {
     let m = muster.measurements.as_ref().ok_or_else(|| {
         format!(
-            "{}: Muster nennt keine Maßdatei – bitte über Datei → Maßdatei wählen… eine angeben",
+            "{}: Muster nennt keine Maßdatei – bitte über Datei › Maßdatei wählen… eine angeben",
             muster_pfad.display()
         )
     })?;

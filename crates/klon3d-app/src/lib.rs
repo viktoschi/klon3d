@@ -3,4 +3,5 @@
 //! The modules are public so that integration tests can build the window without a real one.
 //! `muster` holds plain data and has no egui types.
 
+pub mod ansicht2d;
 pub mod muster;
