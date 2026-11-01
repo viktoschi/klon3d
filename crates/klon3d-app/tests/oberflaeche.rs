@@ -1,0 +1,599 @@
+//! UI tests of the window, headless with egui_kittest: no GPU and no real window needed.
+//!
+//! The window is driven by its labels (AccessKit), as a user would: menus are clicked, keys are
+//! pressed, files are dropped. The numbers it shows are compared with an independent evaluation
+//! through `klon3d-pattern` – the calls `klon3d naehte` makes – not with the app's own data.
+//! The patterns are the test patterns of `klon3d-pattern` in this repository.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use eframe::egui;
+use egui::{Key, Modifiers, Role, Theme};
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_kittest::Harness;
+use klon3d_app::app::{App, SCHLUESSEL_THEMA};
+use klon3d_app::dateiwahl::Zweck;
+use klon3d_pattern::geom::{lies_messungen, Auswertung};
+use klon3d_pattern::kanten::Kurvenquelle;
+use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
+use klon3d_pattern::read_path;
+
+fn muster_ordner() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../klon3d-pattern/tests/muster")
+}
+
+fn bluse() -> PathBuf {
+    muster_ordner().join("bluse3_v2.sm2d")
+}
+
+/// A window large enough that the piece list and the seam list are laid out completely.
+fn fenster() -> Harness<'static, App> {
+    Harness::builder()
+        .with_size([1600.0, 1400.0])
+        .build_eframe(|cc| App::neu(cc))
+}
+
+fn mit_bluse() -> Harness<'static, App> {
+    let mut h = fenster();
+    assert!(h.state_mut().muster_laden(bluse()));
+    h.run();
+    h
+}
+
+/// Δ as `klon3d naehte` prints it (same expression as in `klon3d-cli`).
+fn delta_wie_cli(d: f64) -> String {
+    format!("{:+.4}", if d.abs() < 5e-5 { 0.0 } else { d })
+}
+
+/// The name after the last " - " (all Bluse3 pieces are called "Bluse 3 - …").
+fn kurzname(name: &str) -> &str {
+    name.rsplit_once(" - ").map_or(name, |(_, k)| k)
+}
+
+/// Independent evaluation of the Bluse3 v2.
+struct Soll {
+    /// Pieces with an outline: full name, circumference in cm, boundary edges as
+    /// ("A* › B", length in cm).
+    teile: Vec<(String, f64, Vec<(String, f64)>)>,
+    /// Seams: Kennung, L_A, L_B, Δ.
+    naehte: Vec<(String, f64, f64, f64)>,
+}
+
+fn soll_bluse() -> Soll {
+    let muster = read_path(&bluse()).unwrap();
+    let mess = lies_messungen(&muster_ordner().join("measurements.smis"), &muster.unit).unwrap();
+    let ev = Auswertung::new(&muster, mess);
+    let teile = muster
+        .pieces()
+        .into_iter()
+        .filter(|p| ev.stueck_umriss(p).map(|u| u.len() >= 3).unwrap_or(false))
+        .map(|p| {
+            let r = ev.teilrand(p, Kurvenquelle::Seamly).unwrap();
+            let kanten = r
+                .kanten
+                .iter()
+                .map(|k| {
+                    let (a, b) = (&r.punktknoten[k.von], &r.punktknoten[k.bis]);
+                    let stern = |x: bool| if x { "*" } else { "" };
+                    (
+                        format!(
+                            "{}{} › {}{}",
+                            a.name,
+                            stern(a.kerbe),
+                            b.name,
+                            stern(b.kerbe)
+                        ),
+                        r.in_cm(k.laenge),
+                    )
+                })
+                .collect();
+            (p.name.clone().unwrap(), r.in_cm(r.umfang()), kanten)
+        })
+        .collect();
+    let text = std::fs::read_to_string(bluse().with_extension("naehte")).unwrap();
+    let defs = lies_nahtliste(&text).unwrap();
+    let bericht = pruefe_naehte(&ev, &defs, Kurvenquelle::Seamly).unwrap();
+    let naehte = bericht
+        .naehte
+        .iter()
+        .map(|n| (n.kennung.clone(), n.a.laenge_cm, n.b.laenge_cm, n.diff_cm))
+        .collect();
+    Soll { teile, naehte }
+}
+
+/// The texts of the `n` cells right of the button `knopf` in its grid row.
+fn zeile(h: &Harness<'_, App>, knopf: &str, n: usize) -> Vec<String> {
+    zeile_nach(h, Role::Button, knopf, n)
+}
+
+/// The texts of the `n` cells right of the widget with `rolle` and `text` in its grid row.
+fn zeile_nach(h: &Harness<'_, App>, rolle: Role, text: &str, n: usize) -> Vec<String> {
+    let k = h.get_by_role_and_label(rolle, text);
+    let a = k.accesskit_node();
+    let eltern = a.parent().expect("Knopf ohne Eltern");
+    let kinder: Vec<_> = eltern.children().collect();
+    let i = kinder.iter().position(|c| c.id() == a.id()).unwrap();
+    kinder[i + 1..i + 1 + n]
+        .iter()
+        .map(|c| c.value().or_else(|| c.label()).unwrap_or_default())
+        .collect()
+}
+
+/// A primary click at a screen position.
+fn klick_bei(h: &mut Harness<'_, App>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    for gedrueckt in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: gedrueckt,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    h.run();
+}
+
+#[test]
+fn teileliste_zeigt_jedes_teil_mit_umriss() {
+    let h = mit_bluse();
+    let soll = soll_bluse();
+    assert_eq!(soll.teile.len(), 28, "Bluse3 v2 hat 28 Teile mit Umriss");
+    assert!(h
+        .query_by_label(&format!("Teile ({})", soll.teile.len()))
+        .is_some());
+    for (name, umfang, _) in &soll.teile {
+        let kurz = kurzname(name);
+        let z = zeile(&h, kurz, 2);
+        assert_eq!(z[0], format!("{umfang:.4}"), "Umfang von {name}");
+    }
+    assert_eq!(
+        h.state().muster.as_ref().unwrap().teile.len(),
+        soll.teile.len()
+    );
+}
+
+#[test]
+fn nahtliste_zeigt_jede_naht_wie_klon3d_naehte() {
+    let h = mit_bluse();
+    let soll = soll_bluse();
+    assert_eq!(soll.naehte.len(), 24);
+    for (kennung, la, lb, d) in &soll.naehte {
+        let z = zeile(&h, kennung, 4);
+        assert_eq!(z[1], format!("{la:.4}"), "L_A von {kennung}");
+        assert_eq!(z[2], format!("{lb:.4}"), "L_B von {kennung}");
+        assert_eq!(z[3], delta_wie_cli(*d), "Δ von {kennung}");
+    }
+    // The list uses no edge twice; the status bar names the largest deviation like the CLI.
+    assert!(h.query_by_label("keine Kante in zwei Nähten").is_some());
+    let (k, d) = soll
+        .naehte
+        .iter()
+        .max_by(|x, y| x.3.abs().total_cmp(&y.3.abs()))
+        .map(|n| (n.0.clone(), n.3))
+        .unwrap();
+    let text = format!("größte Abweichung {k} Δ {} cm", delta_wie_cli(d));
+    assert!(h.query_by_label(&text).is_some(), "{text}");
+}
+
+#[test]
+fn klick_in_der_liste_fuellt_die_eigenschaften() {
+    let mut h = mit_bluse();
+    let soll = soll_bluse();
+    assert!(h.query_by_label("Randkanten (22)").is_none());
+    let (i, (name, umfang, kanten)) = soll
+        .teile
+        .iter()
+        .enumerate()
+        .find(|(_, t)| t.0.ends_with(" - Band Mitte"))
+        .unwrap();
+    h.get_by_role_and_label(Role::Button, "Band Mitte").click();
+    h.run();
+    assert_eq!(h.state().gewaehlt, Some(i));
+    assert!(h.query_by_label(name).is_some(), "voller Name {name}");
+    assert!(h.query_by_label(&format!("{umfang:.4} cm")).is_some());
+    assert!(h
+        .query_by_label(&format!("Randkanten ({})", kanten.len()))
+        .is_some());
+    for (kante, laenge) in kanten {
+        let z = zeile_nach(&h, Role::Label, kante, 1);
+        assert_eq!(z[0], format!("{laenge:.4}"), "Länge von {kante}");
+    }
+}
+
+#[test]
+fn klick_in_die_ansicht_waehlt_ein_teil() {
+    let mut h = mit_bluse();
+    let flaeche = h.get_by_label("2D-Ansicht").rect();
+    let (i, punkt) = {
+        let app = h.state();
+        let m = app.muster.as_ref().unwrap();
+        let i = m.teile.iter().position(|t| t.kurz == "Band Mitte").unwrap();
+        let t = &m.teile[i];
+        let v = t.versatz(app.ansicht.ausgelegt);
+        let sicht = app.ansicht.sicht.unwrap();
+        let (x, y) = sicht.zu_bild(klon3d_pattern::Pt::new(
+            t.etikett.x + v.x,
+            t.etikett.y + v.y,
+        ));
+        (i, flaeche.min + egui::vec2(x as f32, y as f32))
+    };
+    assert!(
+        flaeche.contains(punkt),
+        "Etikett von Band Mitte liegt in der Ansicht"
+    );
+    klick_bei(&mut h, punkt);
+    assert_eq!(h.state().gewaehlt, Some(i));
+    // A click on empty space clears the selection.
+    klick_bei(&mut h, flaeche.min + egui::vec2(3.0, 3.0));
+    assert_eq!(h.state().gewaehlt, None);
+}
+
+/// A tiny in-memory storage for the persistence test.
+#[derive(Default)]
+struct Speicher(HashMap<String, String>);
+
+impl eframe::Storage for Speicher {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_string(), value);
+    }
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+    fn flush(&mut self) {}
+}
+
+#[test]
+fn design_umschalten_und_behalten() {
+    let mut h = fenster();
+    h.run();
+    assert_eq!(h.state().thema, Theme::Dark, "dunkel ist die Vorgabe");
+    assert!(h.ctx.global_style().visuals.dark_mode);
+
+    h.get_by_label("Hell/Dunkel").click();
+    h.run();
+    assert_eq!(h.state().thema, Theme::Light);
+    assert_eq!(h.ctx.theme(), Theme::Light);
+    assert!(!h.ctx.global_style().visuals.dark_mode);
+
+    // Saved and read back by a new window from the same storage.
+    let mut speicher = Speicher::default();
+    eframe::App::save(h.state_mut(), &mut speicher);
+    assert_eq!(
+        speicher.0.get(SCHLUESSEL_THEMA).map(String::as_str),
+        Some("hell")
+    );
+    drop(h);
+    let mut h2 = Harness::builder()
+        .with_size([1600.0, 1400.0])
+        .build_eframe(|cc| {
+            cc.storage = Some(&speicher);
+            App::neu(cc)
+        });
+    h2.run();
+    assert_eq!(h2.state().thema, Theme::Light);
+    assert!(!h2.ctx.global_style().visuals.dark_mode);
+
+    // Back to dark through the menu Ansicht.
+    h2.get_by_label("Ansicht").click();
+    h2.run();
+    h2.get_by_label("Dunkel").click();
+    h2.run();
+    assert_eq!(h2.state().thema, Theme::Dark);
+    assert!(h2.ctx.global_style().visuals.dark_mode);
+}
+
+#[test]
+fn menues_und_gesperrte_eintraege() {
+    let mut h = mit_bluse();
+    let menues: [(&str, &[&str], &[&str]); 5] = [
+        (
+            "Datei",
+            &[
+                "Muster öffnen… Strg+O",
+                "Maßdatei wählen…",
+                "Nahtliste wählen…",
+                "Beenden Strg+Q",
+            ],
+            &["Körper…", "Export OBJ…", "Export DXF…"],
+        ),
+        (
+            "Simulation",
+            &[],
+            &[
+                "Start",
+                "Pause",
+                "Einzelschritt",
+                "Zurücksetzen",
+                "Material…",
+            ],
+        ),
+        (
+            "Ansicht",
+            &[
+                "2D-Muster",
+                "Nähte",
+                "Auslage L",
+                "Konstruktionslage L",
+                "Einpassen F",
+                "Dunkel",
+                "Hell",
+            ],
+            &["3D", "Netz", "Dehnungskarte", "Abstandskarte"],
+        ),
+        ("Prüfen", &["Nahtlängen"], &["Netzprüfung"]),
+        ("Hilfe", &["Tastenkürzel", "Über klon3d"], &[]),
+    ];
+    for (menue, frei, gesperrt) in menues {
+        h.get_by_label(menue).click();
+        h.run();
+        for e in frei {
+            let k = h.get_by_role_and_label(Role::Button, e);
+            assert!(!k.accesskit_node().is_disabled(), "{menue} › {e} gesperrt");
+        }
+        for e in gesperrt {
+            // In the Ansicht menu "3D" also exists as a toolbar button; both are disabled.
+            for k in h.get_all_by_role_and_label(Role::Button, e) {
+                assert!(
+                    k.accesskit_node().is_disabled(),
+                    "{menue} › {e} nicht gesperrt"
+                );
+            }
+        }
+        // Close the menu again.
+        h.get_by_label(menue).click();
+        h.run();
+        for e in gesperrt.iter().chain(frei.iter()) {
+            // "3D" stays as a toolbar button.
+            if *e != "3D" {
+                let noch_da = h.query_by_role_and_label(Role::Button, e).is_some();
+                assert!(!noch_da, "{menue} › {e} nach dem Schliessen");
+            }
+        }
+    }
+
+    // A disabled entry cannot be activated: clicking "Start" changes nothing.
+    let vorher = (
+        h.state().meldung.clone(),
+        h.state().gewaehlt,
+        h.state().ansicht.ausgelegt,
+    );
+    h.get_by_label("Simulation").click();
+    h.run();
+    h.get_by_label("Start").click();
+    h.run();
+    // (egui closes the menu on any click inside it; that is all that happens.)
+    let nachher = (
+        h.state().meldung.clone(),
+        h.state().gewaehlt,
+        h.state().ansicht.ausgelegt,
+    );
+    assert_eq!(vorher, nachher);
+    assert!(h.state().dateiwahl.is_none() && h.state().hilfe.is_none());
+
+    // An enabled entry acts: Hilfe › Tastenkürzel opens the help window.
+    if h.query_by_label("Start").is_some() {
+        h.get_by_label("Simulation").click();
+        h.run();
+    }
+    h.get_by_label("Hilfe").click();
+    h.run();
+    h.get_by_label("Tastenkürzel").click();
+    h.run();
+    assert!(h.state().hilfe.is_some());
+    h.get_by_label("Hilfe schließen").click();
+    h.run();
+    assert!(h.state().hilfe.is_none());
+}
+
+#[test]
+fn tastenkuerzel_und_textfeld() {
+    let mut h = mit_bluse();
+    let n = h.state().muster.as_ref().unwrap().teile.len();
+    h.key_press(Key::Tab);
+    h.run();
+    assert_eq!(h.state().gewaehlt, Some(0));
+    h.key_press(Key::Tab);
+    h.run();
+    assert_eq!(h.state().gewaehlt, Some(1));
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Tab);
+    h.run();
+    assert_eq!(h.state().gewaehlt, Some(n - 1));
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().gewaehlt, None);
+
+    assert!(h.state().ansicht.ausgelegt);
+    h.key_press(Key::L);
+    h.run();
+    assert!(
+        !h.state().ansicht.ausgelegt,
+        "L schaltet zur Konstruktionslage"
+    );
+
+    // F fits again after zooming in.
+    let eingepasst = h.state().ansicht.sicht.unwrap();
+    h.state_mut().ansicht.sicht.as_mut().unwrap().zoom *= 3.0;
+    h.run();
+    h.key_press(Key::F);
+    h.run();
+    let s = h.state().ansicht.sicht.unwrap();
+    assert!((s.zoom - eingepasst.zoom).abs() < 1e-9 * eingepasst.zoom);
+
+    // With the search field focused, letters are text, not shortcuts.
+    h.get_by_label("Suchen:").focus();
+    h.run();
+    h.key_press(Key::L);
+    h.key_press(Key::F);
+    h.get_by_label("Suchen:").type_text("Band");
+    h.run();
+    assert!(
+        !h.state().ansicht.ausgelegt,
+        "L darf im Textfeld nicht wirken"
+    );
+    assert_eq!(h.state().suche, "Band");
+    assert!(
+        h.query_by_label("Rueckenteil Mitte Links").is_none(),
+        "Suche filtert"
+    );
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Band Mitte")
+        .is_some());
+
+    // Ctrl+O opens the file dialog, Esc closes it.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::O);
+    h.run();
+    assert_eq!(
+        h.state().dateiwahl.as_ref().map(|d| d.zweck),
+        Some(Zweck::Muster)
+    );
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().dateiwahl.is_none());
+
+    // Ctrl+Q asks the window to close.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Q);
+    h.run();
+    assert!(h.state().beenden_angefordert);
+}
+
+#[test]
+fn oeffnen_ueber_den_dialog() {
+    let mut h = fenster();
+    h.run();
+    h.get_by_label("Öffnen").click();
+    h.run();
+    assert!(h.state().dateiwahl.is_some());
+    // A path that does not exist gives a message in the dialog, nothing is loaded.
+    h.state_mut().dateiwahl.as_mut().unwrap().pfad_text =
+        muster_ordner().join("fehlt.sm2d").display().to_string();
+    h.get_by_label("Datei öffnen").click();
+    h.run();
+    assert!(h.state().muster.is_none());
+    assert!(h.query_by_label_contains("Datei nicht gefunden").is_some());
+    // The real pattern loads.
+    h.state_mut().dateiwahl.as_mut().unwrap().pfad_text = bluse().display().to_string();
+    h.get_by_label("Datei öffnen").click();
+    h.run();
+    assert!(h.state().dateiwahl.is_none());
+    assert_eq!(h.state().muster.as_ref().map(|m| m.teile.len()), Some(28));
+}
+
+#[test]
+fn nicht_vorhandene_datei_gibt_meldung_statt_panik() {
+    let mut h = fenster();
+    h.run();
+    let weg = muster_ordner().join("gibt_es_nicht.sm2d");
+    assert!(!h.state_mut().muster_laden(&weg));
+    h.run();
+    assert!(h.state().muster.is_none());
+    assert!(h.state().meldung_fehler);
+    let f = h.state().fehlerfenster.clone().expect("Fehlerfenster");
+    assert!(f.contains("gibt_es_nicht.sm2d"), "{f}");
+    // Status bar and error window both show it.
+    assert!(h.query_all_by_label_contains("gibt_es_nicht.sm2d").count() >= 2);
+    h.get_by_label("Fehler schließen").click();
+    h.run();
+    assert!(h.state().fehlerfenster.is_none());
+    assert!(h.state().meldung.contains("gibt_es_nicht.sm2d"));
+
+    // Choosing a missing measurement file keeps the loaded pattern.
+    assert!(h.state_mut().muster_laden(bluse()));
+    let mut auftrag = h.state().auftrag.clone().unwrap();
+    auftrag.massdatei = Some(muster_ordner().join("fehlt.smis"));
+    assert!(!h.state_mut().laden(auftrag));
+    h.run();
+    assert!(h.state().muster.is_some());
+    assert!(h
+        .state()
+        .fehlerfenster
+        .as_deref()
+        .unwrap()
+        .starts_with("Maßdatei fehlt"));
+}
+
+/// A file dropped onto the window.
+#[derive(Debug)]
+struct Abgelegt(PathBuf);
+
+impl egui::DroppedFile for Abgelegt {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+#[test]
+fn muster_ablegen_oeffnet_es() {
+    let mut h = fenster();
+    h.run();
+    h.input_mut()
+        .dropped_files
+        .push(Arc::new(Abgelegt(bluse())));
+    h.run();
+    assert_eq!(h.state().muster.as_ref().map(|m| m.teile.len()), Some(28));
+    // A file of another kind is refused with a message.
+    h.input_mut()
+        .dropped_files
+        .push(Arc::new(Abgelegt(muster_ordner().join("mod.rs"))));
+    h.run();
+    assert!(h.state().fehlerfenster.is_some());
+    assert!(h.state().muster.is_some());
+}
+
+/// All `.sm2d` below `ordner`.
+fn alle_muster(ordner: &Path, out: &mut Vec<PathBuf>) {
+    let mut e: Vec<PathBuf> = std::fs::read_dir(ordner)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    e.sort();
+    for p in e {
+        if p.is_dir() {
+            alle_muster(&p, out);
+        } else if p.extension().is_some_and(|x| x == "sm2d") {
+            out.push(p);
+        }
+    }
+}
+
+#[test]
+fn jedes_pruefmuster_laedt_oder_meldet() {
+    let mut muster = Vec::new();
+    alle_muster(&muster_ordner(), &mut muster);
+    assert!(muster.len() >= 10, "{} Muster gefunden", muster.len());
+    for p in muster {
+        let mut h = fenster();
+        let ok = h.state_mut().muster_laden(&p);
+        h.run();
+        let app = h.state();
+        match &app.muster {
+            Some(m) => {
+                assert!(ok);
+                assert!(!m.teile.is_empty(), "{}: keine Teile", p.display());
+                eprintln!(
+                    "{}: {} Teile, {}",
+                    p.display(),
+                    m.teile.len(),
+                    app.abweichung_text()
+                );
+            }
+            None => {
+                assert!(!ok);
+                let f = app.fehlerfenster.as_deref().unwrap_or("");
+                assert!(!f.is_empty(), "{}: weder Muster noch Meldung", p.display());
+                eprintln!("{}: Meldung {f}", p.display());
+            }
+        }
+    }
+}

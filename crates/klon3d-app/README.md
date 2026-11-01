@@ -9,16 +9,18 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** steps 1–5 done. The window runs: `cargo +1.99 run --locked -p klon3d-app --
+**2026-11-01:** steps 1–6 done. The window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
 lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `größte Abweichung N07L
-Δ -0.0737 cm` as `klon3d naehte` prints). Files:
+Δ -0.0737 cm` as `klon3d naehte` prints). `cargo +1.99 test --locked -p klon3d-app`: 25 unit tests +
+11 UI tests (`tests/oberflaeche.rs`, egui_kittest, no GPU) green, no compiler warnings. Files:
 
 * `src/muster.rs` – pattern as plain data (outlines, ear-clipping triangulation, layout, boundary
   edges, seam report, errors as `Err(String)`, reader panics caught).
 * `src/ansicht2d.rs` – view math as plain functions (`Sicht`, `treffer`, scale bar) and the painting;
   refits on size changes until the user pans or zooms.
-* `src/dateiwahl.rs` – in-app file dialog.
+* `src/dateiwahl.rs` – in-app file dialog (confirm button "Datei öffnen"/"Datei wählen", not
+  "Öffnen", which is the toolbar button).
 * `src/app.rs` – `App` (`eframe::App`): every command is an `Aktion` run at the end of the frame
   (`App::ausfuehren`); shortcuts (Strg+O, Strg+Q, F, L, Tab/Umschalt+Tab, Esc – letters and Tab not
   while a text field has focus or a dialog is open); drag and drop (.sm2d/.smis/.naehte); error and
@@ -27,17 +29,27 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   Aufgabe".
 * `src/panele.rs` – search field, piece list, seam list, properties panel, status bar.
 * `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500.
+* `tests/oberflaeche.rs` – pieces and seams against an independent `klon3d-pattern` evaluation
+  (Δ formatted like the CLI), list click and view click select a piece and fill the properties,
+  theme toggle + save/restore through an in-memory `eframe::Storage`, all five menus with their
+  disabled entries, shortcuts incl. "no letters while the search field has focus", file dialog,
+  drag and drop, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster`
+  load (largest deviations equal `klon3d naehte` for bolero_v37, bustier_v1, bluse2_v26 – checked
+  by hand).
 
-25 unit tests green (`cargo +1.99 test --locked -p klon3d-app`), no warnings. Next: step 6,
-`tests/oberflaeche.rs` with egui_kittest (needs `egui_kittest = { version = "0.37", features =
-["eframe"] }` and a `Cargo.lock` update).
+`Cargo.lock` change for the kittest `eframe` feature: one dependency edge (`egui_kittest` → `eframe`).
 
-Notes for the next steps: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use
-`›`, `–`, `Δ`, `≤`, `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is
-deprecated in 0.37 (`Id::unique`); panels are `egui::Panel::{top,bottom,left,right}(..).show(ui, ..)`.
-kittest's harness calls `ctx.set_theme(Dark)` *after* the app is built, so the app applies its
-stored theme in `ui()`, not only in `App::neu`. Dropping an `egui::FullOutput` with texture deltas
-panics in debug builds (`out.textures_delta.clear()`).
+Next: step 7 (review), then 8 (Windows cross check + CI job), 9 (screenshots), 10 (workspace
+check), 11 (PR).
+
+Notes: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
+`·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is deprecated in 0.37
+(`Id::unique`); panels are `egui::Panel::{top,bottom,left,right}(..).show(ui, ..)`. kittest's
+harness calls `ctx.set_theme(Dark)` *after* the app is built, so the app applies its stored theme in
+`ui()`, not only in `App::neu`. Dropping an `egui::FullOutput` with texture deltas panics in debug
+builds (`out.textures_delta.clear()`). kittest finds `Label`s by their AccessKit *value*; grid rows are
+siblings under one parent (see `zeile_nach` in the UI test). A click on a disabled menu entry closes
+the menu (egui), nothing else.
 
 ## Goal (from #34)
 
@@ -85,7 +97,7 @@ seam deviation, last message.
 - [x] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
 - [x] 4. `dateiwahl.rs`
 - [x] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
-- [ ] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
+- [x] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
 - [ ] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`

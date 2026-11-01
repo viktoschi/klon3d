@@ -430,7 +430,7 @@ impl App {
     }
 
     /// The pattern with the largest seam deviation for the status bar.
-    pub(crate) fn abweichung_text(&self) -> String {
+    pub fn abweichung_text(&self) -> String {
         let Some(m) = &self.muster else {
             return "Nähte: –".into();
         };

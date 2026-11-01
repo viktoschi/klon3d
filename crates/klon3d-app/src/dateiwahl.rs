@@ -363,9 +363,10 @@ impl Dateiwahl {
                     });
                 ui.separator();
                 ui.horizontal(|ui| {
+                    // Not just "Öffnen": the toolbar has a button of that name.
                     let titel = match self.zweck {
-                        Zweck::Muster => "Öffnen",
-                        _ => "Wählen",
+                        Zweck::Muster => "Datei öffnen",
+                        _ => "Datei wählen",
                     };
                     if ui.button(titel).clicked() {
                         antwort = self.bestaetigen();

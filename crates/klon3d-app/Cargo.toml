@@ -13,4 +13,4 @@ eframe = { version = "0.37", default-features = false, features = ["accesskit", 
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "gles", "vulkan", "wgsl"] }
 
 [dev-dependencies]
-egui_kittest = { version = "0.37" }
+egui_kittest = { version = "0.37", features = ["eframe"] }
