@@ -21,6 +21,7 @@
 //! * [`dehnung`] — Dehnungskarte: Hauptdehnungen je Dreieck, mit Kennzahlen je
 //!   Teil (Stufe 5);
 //! * [`verteilung`] — die Kennzahlen, die beide Karten teilen;
+//! * [`farbkarte`] — Wert → Farbe für die Karten, feste Skala je Maß;
 //! * [`roehre`] — der Prüffall von Schritt 4a;
 //! * [`selbstkollision`] - Stoff gegen Stoff wie CLO (Befund 116):
 //!   Nähe-Federn, Durchdringungs-Schub und Stoßprüfung;
@@ -35,6 +36,7 @@ pub mod ausgabe;
 pub mod cpu;
 pub mod dehnung;
 pub mod faerbung;
+pub mod farbkarte;
 pub mod implizit;
 pub mod klebung;
 pub mod koerper;

@@ -9,7 +9,8 @@
 //! Ausgabe: Abstandskarte Stoff → Haut je Teil (Stufe 5, [`klon3d_sim::abstand`]),
 //! Dehnungskarte je Teil ([`klon3d_sim::dehnung`]), Nahtabstände je Naht,
 //! tiefster Punkt, auf Wunsch `koerper.obj`, `anfang.obj`, `ende.obj` (mm),
-//! `abstand.csv` und `dehnung.csv` in je einem Ordner.
+//! `abstand.csv` und `dehnung.csv` in je einem Ordner, dazu mit `--farben`
+//! beide Karten als OBJ mit Farbe je Eckpunkt ([`klon3d_sim::farbkarte`]).
 //!
 //! Mit `--zprj` kommt der Körper stattdessen aus CLOs Projekt: der `body` der
 //! `.avt` (Befund 119) und die Segment- und Landmarkenlisten aus CLOs
@@ -28,13 +29,13 @@ use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
 use klon3d_sim::netzkoerper::{clo_nach_szene, SUCHTIEFE};
 use klon3d_sim::platzierung::{anziehen, lies_lage, platziere, Angezogen, Anziehbar, Anziehen, Huellen, Koerperteile};
 use klon3d_sim::{
-    abstand, ausgabe, dehnung, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz, Material,
-    Simparameter, Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
+    abstand, ausgabe, dehnung, farbkarte, messung, CpuReferenz, ImplizitCg, ImplizitParameter, Koerper, Koerpernetz,
+    Material, Simparameter, Szene, Teilvorgabe, RADICAL_RUBBER_04, WEICH_FAKTOR,
 };
 
 const AUFRUF: &str = "Aufruf: klon3d anziehen <muster.sm2d> [--masse <datei.smis>] [--zprj <projekt.zprj>] [--naehte <datei>] \
                       [--lage <datei>] [--naehen <m/s>] [--schwerkraft-naehen <anteil>] [--naht-k <N/m>] [--cg-max <n>] [--naehbilder <n>] [--einschwingen-min <n>] [--einschwingen-max <n>] [--ohne-koerperpunkte] [--ohne-weite] [--offen] \
-                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--ordner <Resizing>] \
+                      [--material radical|retifist] [--obj <ordner>] [--abstand <ordner>] [--dehnung <ordner>] [--farben <ordner>] [--ordner <Resizing>] \
                       [--rechenweg implizit|xpbd] [--selbstkollision [--schnitte-an-naehten]] [--anfang <lage.obj>] [--bilder <ordner>] [--zeiten <datei>]";
 
 fn fehler(m: impl std::fmt::Display) -> ExitCode {
@@ -60,6 +61,9 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     let mut abstand_ordner: Option<PathBuf> = None;
     // Dehnungskarte (Stufe 5, Aufgabe #17): Ordner für `dehnung.csv`.
     let mut dehnung_ordner: Option<PathBuf> = None;
+    // Coloured maps as OBJ (stage 5, task #19): folder for `dehnung.obj` and
+    // `abstand.obj`.
+    let mut farben_ordner: Option<PathBuf> = None;
     let (mut anfang, mut bilder, mut zeiten): (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) = (None, None, None);
     let mut i = 0;
     while i < args.len() {
@@ -109,6 +113,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             "--obj" => obj = Some(PathBuf::from(w)),
             "--abstand" => abstand_ordner = Some(PathBuf::from(w)),
             "--dehnung" => dehnung_ordner = Some(PathBuf::from(w)),
+            "--farben" => farben_ordner = Some(PathBuf::from(w)),
             "--ordner" => resizing = PathBuf::from(w),
             "--naehbilder" => match w.parse() {
                 Ok(n) => ablauf.naehbilder = n,
@@ -602,6 +607,50 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             return fehler(format!("{}: {e}", o.display()));
         }
         println!("  geschrieben  {} (koerper.obj, anfang.obj, ende.obj; mm)", o.display());
+    }
+    if let Some(o) = &farben_ordner {
+        // Beide Karten als OBJ mit Farbe je Eckpunkt. Dieselbe Geometrie wie
+        // `ende.obj`, nur mit drei Zahlen mehr je `v` — ein Betrachter, der
+        // Eckpunktfarben kennt, zeigt die Karte ohne Umweg.
+        let dehnung_pro_punkt = karte_dehnung.je_punkt(&s);
+        let dateien: [(&str, String); 2] = [
+            (
+                "dehnung.obj",
+                ausgabe::obj_farbig(&s, |i| farbkarte::dehnung(dehnung_pro_punkt[i])),
+            ),
+            (
+                "abstand.obj",
+                match &karte_ende {
+                    Some(k) => ausgabe::obj_farbig(&s, |i| farbkarte::abstand(k.je_punkt[i].abstand * 1e3)),
+                    // Ohne Körper gibt es nur die Dehnung; statt einer leeren
+                    // Datei eine Meldung, die zum Fehlen passt.
+                    None => String::new(),
+                },
+            ),
+        ];
+        if let Err(e) = std::fs::create_dir_all(o) {
+            return fehler(format!("{}: {e}", o.display()));
+        }
+        for (name, inhalt) in dateien {
+            if inhalt.is_empty() {
+                println!("  übersprungen {}: die Szene hat keinen Körper, es gibt keine Abstandskarte", o.join(name).display());
+                continue;
+            }
+            if let Err(e) = std::fs::write(o.join(name), inhalt) {
+                return fehler(format!("{}: {e}", o.join(name).display()));
+            }
+        }
+        println!(
+            "  geschrieben  {} (dehnung.obj, abstand.obj; mm, Farbe je Eckpunkt 0..255)",
+            o.display()
+        );
+        println!(
+            "  Farbskala   Dehnung {:.0}…{:.0} %, Abstand {:.0}…{:.0} mm (blau = wenig, rot = viel)",
+            farbkarte::DEHNUNG_VON,
+            farbkarte::DEHNUNG_BIS,
+            farbkarte::ABSTAND_VON,
+            farbkarte::ABSTAND_BIS
+        );
     }
     ExitCode::SUCCESS
 }
