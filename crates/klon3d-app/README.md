@@ -9,16 +9,20 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** steps 1–3 done. `src/muster.rs` loads a pattern into plain data (outlines, ear-clipping
+**2026-11-01:** steps 1–4 done. `src/muster.rs` loads a pattern into plain data (outlines, ear-clipping
 triangulation for the fill, layout, boundary edges, seam report with the numbers of `klon3d naehte`,
 errors as `Err(String)`, reader panics caught). `src/ansicht2d.rs` has the view math as plain functions
 (`Sicht`: world↔screen, fit, zoom about a point, pan; `treffer` point-in-polygon hit test; scale bar
-1-2-5) and the egui painting (filled pieces, labels, seam edges coloured by `Kantenart`, selected seam,
-scale bar). 18 unit tests green with `cargo +1.99 test --locked -p klon3d-app`. `src/main.rs` is still
-empty. Next: step 4, `src/dateiwahl.rs`.
+1-2-5) and the egui painting. `src/dateiwahl.rs` is the in-app file dialog (folder listing with filter,
+go up, path field with relative/absolute paths, `~`, Windows drive letters; `Dateiwahl::ui` returns
+`Antwort`). 23 unit tests green with `cargo +1.99 test --locked -p klon3d-app`. `src/main.rs` is still
+empty. Next: step 5, `src/app.rs` + `src/main.rs`.
 
-Note: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
-`·`, `×`, `…` only (kittest panics on a missing glyph).
+Notes for the next steps: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use
+`›`, `–`, `Δ`, `≤`, `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is
+deprecated in 0.37 (`Id::unique`); panels are `egui::Panel::{top,bottom,left,right}(..).show(ui, ..)`.
+kittest's harness calls `ctx.set_theme(Dark)` *after* the app is built, so the app must apply its
+stored theme in `ui()`, not only in `App::neu`.
 
 ## Goal (from #34)
 
@@ -64,7 +68,7 @@ seam deviation, last message.
 - [x] 1. Build the skeleton: `cargo build --locked -p klon3d-app --all-targets` (see environment below)
 - [x] 2. `muster.rs` with unit tests (Bluse3 v2: pieces, seams, Δ equal to `pruefe_naehte`)
 - [x] 3. `ansicht2d.rs` (view transform with tests for fit/zoom/hit test)
-- [ ] 4. `dateiwahl.rs`
+- [x] 4. `dateiwahl.rs`
 - [ ] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
 - [ ] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
 - [ ] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes

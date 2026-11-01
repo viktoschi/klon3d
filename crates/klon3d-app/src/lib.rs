@@ -4,4 +4,5 @@
 //! `muster` holds plain data and has no egui types.
 
 pub mod ansicht2d;
+pub mod dateiwahl;
 pub mod muster;
