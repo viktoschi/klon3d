@@ -139,10 +139,12 @@ pub struct ImplizitParameter {
     /// [`selbstkollision::finde_schnitte`]).
     pub selbst_schnitte_an_naehten: bool,
     /// Faktor auf die Steifigkeit jeder Klebezone (Vorgabe 1). Die Steifigkeit
-    /// selbst steht in der Zone und kommt aus der Biegesteifigkeit des
-    /// Laminats ([`crate::klebung::Stoffpaar`]); der Faktor ist zum Prüfen da.
-    /// CLO rechnet die Klebe als Feder mit Jacobian, nicht als feste Kopplung
-    /// (Befund 59).
+    /// selbst steht in der Zone und kommt aus der **Dehnsteifigkeit** der oberen
+    /// Lage, nicht aus ihrer Biegesteifigkeit ([`crate::klebung::Stoffpaar`]);
+    /// der Faktor ist zum Prüfen da. Die Biegung des geklebten Paares steht
+    /// getrennt in der Zone (`Zone::biegefaktor`) und wirkt auf die
+    /// Biege-Constraints, nicht auf die Federn. CLO rechnet die Klebe als Feder
+    /// mit Jacobian, nicht als feste Kopplung (Befund 59).
     pub klebe_faktor: f64,
 }
 
@@ -677,6 +679,7 @@ mod tests {
             abstand: Gruppe::default(),
             naht: Gruppe { punkte: vec![[0, 1]], ruhe: vec![ruhe], nachgiebigkeit: vec![0.0], farben: vec![0..1] },
             biegung: Gruppe::default(),
+            biegung_grund: Vec::new(),
             dreiecke: Vec::new(),
             ruhe_inv: Vec::new(),
             teile: Vec::new(),

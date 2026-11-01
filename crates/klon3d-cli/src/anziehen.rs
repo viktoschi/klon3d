@@ -359,6 +359,7 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
     // Klebezonen aus der Lagedatei (`klebt <Teil>`): Die Bindung entsteht dort,
     // wo die Teile tatsächlich liegen; ohne `klebt` entsteht keine Feder und
     // jedes bestehende Muster rechnet unverändert.
+    let mut zonen = Vec::new();
     for (zone, ohne) in p.klebungen(&s) {
         println!(
             "  Klebung      {:<40} {} Punkte gebunden, größter Abstand {:.1} mm, ohne Gegenstück {}",
@@ -367,8 +368,11 @@ pub fn befehl_anziehen(args: &[String]) -> ExitCode {
             zone.groesster_abstand(&s.x) * 1e3,
             ohne
         );
-        s.klebungen.push(zone);
+        zonen.push(zone);
     }
+    // Setzt die Zonen und hebt zugleich die Biegung der Constraints in der
+    // Klebefläche auf die Plattensteifigkeit des Laminats.
+    s.klebungen_setzen(zonen);
     if let Some(o) = &obj {
         if let Err(e) = std::fs::create_dir_all(o).and_then(|_| std::fs::write(o.join("anfang.obj"), ausgabe::obj(&s))) {
             return fehler(format!("{}: {e}", o.display()));

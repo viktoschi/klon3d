@@ -294,6 +294,7 @@ pub fn punkteregen(k: &Koerpernetz) -> Szene {
         abstand: Default::default(),
         naht: Default::default(),
         biegung: Default::default(),
+        biegung_grund: Vec::new(),
         dreiecke: Vec::new(),
         ruhe_inv: Vec::new(),
         teile: Vec::new(),
