@@ -32,17 +32,43 @@
 //! *not* used: it is in N·m² and is 10⁹ times too soft as a spring constant
 //! (measured: bonded layers slid exactly as if loose).
 //!
-//! # What the stiffness does not model
+//! # Bending
 //!
-//! Bending of the bonded plate. Measured on a 200 × 40 mm strip held at both
-//! ends, all three cases - two loose layers, two bonded layers, one 0.8 mm
-//! laminate - sag within 0.2 % of each other, because the sag is carried by
-//! membrane tension, and two loose layers in parallel carry exactly as much as
-//! the laminate (`2 × 348 = 696` N/m). Bending only matters for short, thick or
-//! pre-curved pieces, and there the zone reproduces it only as far as the
-//! fabric's own bending constraint does. The laminate's plate stiffness
-//! (19,858 against 2 × 2,482) is therefore *not* reproduced - a known limit,
-//! recorded in the test `durchbiegung_trennt_die_faelle_nicht_und_das_ist_erklaert`.
+//! Bonding alone does not make a plate. The bond is a shear spring: it stops
+//! the layers from sliding, and that is all a shear spring can do at the
+//! interface. Composite bending comes from the layers being held at a distance
+//! from the common neutral axis, and the fabric's own bending constraints know
+//! nothing about the other layer - so two bonded layers bent as `2 × D` while
+//! the laminate of the same thickness bends as `8 × D` (MATERIAL.md).
+//!
+//! The bending term is therefore put on the constraints that lie **inside** the
+//! bonded area: their compliance is divided by [`Stoffpaar::biegefaktor`], so
+//! the pair carries the plate stiffness of the total thickness. For two equal
+//! layers the factor is 4 - each layer contributes 4 × 2,482 = 9,928 about the
+//! common axis, together 19,858, the laminate row of MATERIAL.md. The factor is
+//! the same for both layers because the extra stiffness is distributed in
+//! proportion to each layer's own `biegung_nm`.
+//!
+//! Only constraints whose **both** adjacent triangles are bonded are touched, so
+//! a zone that covers half a piece does not stiffen the rest: a glued
+//! reinforcement must not make the whole panel rigid.
+//!
+//! # Measured limit
+//!
+//! On a 200 × 40 mm strip held at both ends all three cases - two loose layers,
+//! two bonded layers, one 0.8 mm laminate - sag within 0.2 % of each other, and
+//! that stays true with the bending term: the sag there is carried by membrane
+//! tension, not by bending, and two loose layers in parallel carry exactly as
+//! much as the laminate (`2 × 348 = 696` N/m). The strip result is recorded in
+//! `durchbiegung_trennt_die_faelle_nicht_und_das_ist_erklaert`.
+//!
+//! A cantilever does not help either, although it is the obvious piece for
+//! bending: at the mesh sizes that solve here it deforms into a straight line -
+//! it shears instead of bending - and making the bending constraints 10×
+//! stiffer moves the tip by 0.03 %. The acceptance therefore measures the plate
+//! stiffness directly, as energy at a prescribed curvature
+//! (`geklebtes_paar_traegt_die_plattensteifigkeit_des_laminats`), where a
+//! circular arc carries no membrane strain and the energy is `½·D·κ²·A`.
 //!
 //! # What this module does not do
 //!
@@ -51,8 +77,11 @@
 //! It does not glue against the body (that is CLO's "Tack on Avatar"), it does
 //! not skive, and it has no GPU version.
 
+use std::collections::BTreeSet;
+
 use crate::koerper::{add, dot, mul, norm, sub};
 use crate::selbstkollision::Feder;
+use crate::szene::Szene;
 
 /// A bond point: cloth point `punkt`, triangle `dreieck` of the scene, and the
 /// barycentric coordinates of the bond point in that triangle.
@@ -85,6 +114,9 @@ pub struct Zone {
     /// Spring stiffness of the whole zone in N/m, spread over its bonds
     /// ([`Stoffpaar::steifigkeit`]).
     pub steifigkeit: f64,
+    /// Factor on the bending stiffness of the constraints inside the bonded
+    /// area ([`Stoffpaar::biegefaktor`]). `1.0` leaves them untouched.
+    pub biegefaktor: f64,
 }
 
 impl Zone {
@@ -142,7 +174,7 @@ impl Zone {
             }
         }
         let steifigkeit = paar.steifigkeit(bindungen.len());
-        (Zone { name: name.to_string(), bindungen, steifigkeit }, ohne)
+        (Zone { name: name.to_string(), bindungen, steifigkeit, biegefaktor: paar.biegefaktor() }, ohne)
     }
 
     pub fn len(&self) -> usize {
@@ -160,6 +192,63 @@ impl Zone {
             .iter()
             .map(|b| norm(sub(sub(x[b.punkt as usize], bond_punkt(b, x)), b.versatz)))
             .fold(0.0, f64::max)
+    }
+
+    /// Triangles of the scene that lie fully inside the bonded area.
+    ///
+    /// **Which points count as bonded.** Both sides of the interface: the cloth
+    /// points the bonds hang on (the upper layer's points) and the corners of
+    /// the triangles the bonds project into (the lower layer's points). The
+    /// second set is needed because the lower layer is meshed on its own - it
+    /// has triangles that no bond point falls into, simply because two upper
+    /// points shared a triangle. Without them the lower layer keeps its own
+    /// bending stiffness and the pair ends up at 3.25× instead of 4× the loose
+    /// layers (measured).
+    ///
+    /// **Why the closure stops here.** A triangle is covered when *all* three
+    /// corners are bonded. That is one local step - no flood fill, no radius -
+    /// and it keeps a glued patch from stiffening the piece around it: a
+    /// triangle on the border of the zone touches unbonded points and stays out.
+    fn gebundene_dreiecke(&self, s: &Szene) -> BTreeSet<[u32; 3]> {
+        let schluessel = |d: [u32; 3]| {
+            let mut k = d;
+            k.sort_unstable();
+            k
+        };
+        let mut punkte: BTreeSet<u32> = self.bindungen.iter().map(|b| b.punkt).collect();
+        for b in &self.bindungen {
+            punkte.extend(b.dreieck.iter().copied());
+        }
+        let mut gebunden = BTreeSet::new();
+        for d in &s.dreiecke {
+            if d.iter().all(|i| punkte.contains(i)) {
+                gebunden.insert(schluessel(*d));
+            }
+        }
+        gebunden
+    }
+
+    /// Indices of the scene's bending constraints that lie inside the bonded
+    /// area: both triangles of the constraint are bonded. Those are the ones
+    /// whose compliance has to shrink by [`Self::biegefaktor`].
+    pub fn biege_constraints(&self, s: &Szene) -> Vec<usize> {
+        if (self.biegefaktor - 1.0).abs() < 1e-12 || self.is_empty() {
+            return Vec::new();
+        }
+        let gebunden = self.gebundene_dreiecke(s);
+        let schluessel = |d: [u32; 3]| {
+            let mut k = d;
+            k.sort_unstable();
+            k
+        };
+        let mut idx = Vec::new();
+        for (c, p) in s.biegung.punkte.iter().enumerate() {
+            let [i, j, o_a, o_b] = *p;
+            if gebunden.contains(&schluessel([i, j, o_a])) && gebunden.contains(&schluessel([j, i, o_b])) {
+                idx.push(c);
+            }
+        }
+        idx
     }
 }
 
@@ -214,17 +303,17 @@ pub fn naechster_mit_bary(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) ->
     (an, [1.0 - v - w, v, w])
 }
 
-/// The pair of layers that a zone bonds, and the spring stiffness that follows
-/// from them.
+/// The pair of layers that a zone bonds, the spring stiffness that follows from
+/// them, and the bending the bonded unit gains over two loose layers.
 ///
-/// **Why not the bending stiffness.** `Material::biegung_nm` is a plate
-/// stiffness in N·m² (the table value 2,482 is 2,482·10⁻⁹ N·m²). A bond spring
-/// needs N/m, and using the plate value directly makes it 10⁹ times too soft -
-/// measured: two layers bonded with it slide exactly as if loose. The quantity
-/// with the right dimension is the **in-plane** stiffness
+/// **Why not the bending stiffness for the bond.** `Material::biegung_nm` is a
+/// plate stiffness in N·m² (the table value 2,482 is 2,482·10⁻⁹ N·m²). A bond
+/// spring needs N/m, and using the plate value directly makes it 10⁹ times too
+/// soft - measured: two layers bonded with it slide exactly as if loose. The
+/// quantity with the right dimension for the bond is the **in-plane** stiffness
 /// `Material::dehnung_n_m` (N/m).
 ///
-/// **What the number means.** One bond holds a square patch of the upper
+/// **What the bond number means.** One bond holds a square patch of the upper
 /// fabric of its own size. Stretching a square patch by `u` costs
 /// `dehnung · u` (width and length are equal, so they cancel), so a single bond
 /// is as stiff as `dehnung_n_m` in N/m. The zone as a whole is that times its
@@ -240,6 +329,10 @@ pub struct Stoffpaar {
     pub dicke_oben: f64,
     /// Thickness of the lower layer in m.
     pub dicke_unten: f64,
+    /// Plate stiffness of the upper layer in N·m² (`Material::biegung_nm`).
+    pub biegung_oben: f64,
+    /// Plate stiffness of the lower layer in N·m².
+    pub biegung_unten: f64,
 }
 
 impl Stoffpaar {
@@ -256,6 +349,48 @@ impl Stoffpaar {
     /// docs.
     pub fn steifigkeit(&self, bindungen: usize) -> f64 {
         self.dehnung_oben * bindungen.max(1) as f64
+    }
+
+    /// Bending stiffness of the bonded unit over the sum of the two layers'
+    /// own plate stiffness, i.e. the factor each layer's bending constraints
+    /// get inside the zone.
+    ///
+    /// **Why not simply 2.** Two loose layers bend about their own mid-planes:
+    /// `D₁ + D₂`. Bonded, the pair bends about one common neutral axis, and a
+    /// layer whose mid-plane sits `c` away from it carries
+    /// `D + E·t·c²` (parallel axis). With `D = E·t³/12` the term is
+    /// `12·D/t² · c²`, so for two equal layers with `c = t/2` each:
+    /// `D + 3·D = 4·D`, together `8·D` - the `Latex_Laminat_2x0.4mm` row of
+    /// MATERIAL.md (19,858 against 8 × 2,482).
+    ///
+    /// The modulus is taken from the **bending** stiffness (`12·D/t²`), not
+    /// from the stretch stiffness: the measured latex bends stiffer than its
+    /// stretch predicts, and the laminate rows in MATERIAL.md follow `D ∝ t³`
+    /// of the bending values. Using the stretch stiffness gives 3.27 instead of
+    /// 4 - measured, not assumed.
+    ///
+    /// The one factor is applied to **both** layers' bending constraints, so
+    /// the pair as a whole ends up at `factor · (D₁ + D₂)`. That reproduces the
+    /// equal-layer case exactly; for layers of different thickness the parallel
+    /// term is distributed in proportion to `D`, not to `D + E·t·c²`, which is
+    /// the known limit of this task (see the PR).
+    ///
+    /// `1.0` when the layers cannot bond (zero stiffness) or a plate value is
+    /// missing: a pair that carries no shear gets no plate stiffness either.
+    pub fn biegefaktor(&self) -> f64 {
+        let (d_1, d_2) = (self.biegung_oben, self.biegung_unten);
+        let (t_1, t_2) = (self.dicke_oben, self.dicke_unten);
+        if d_1 <= 0.0 || d_2 <= 0.0 || t_1 <= 0.0 || t_2 <= 0.0 {
+            return 1.0;
+        }
+        // Axial stiffness per layer consistent with its own plate stiffness.
+        let (ea_1, ea_2) = (12.0 * d_1 / (t_1 * t_1), 12.0 * d_2 / (t_2 * t_2));
+        // Mid-planes relative to the interface: the upper layer sits half its
+        // thickness above, the lower half its thickness below.
+        let (z_1, z_2) = (0.5 * t_1, -0.5 * t_2);
+        let z_s = (ea_1 * z_1 + ea_2 * z_2) / (ea_1 + ea_2);
+        let d_parallel = ea_1 * (z_1 - z_s).powi(2) + ea_2 * (z_2 - z_s).powi(2);
+        (d_1 + d_2 + d_parallel) / (d_1 + d_2)
     }
 }
 
@@ -340,7 +475,13 @@ mod tests {
     /// interface can never be stiffer than the layer itself.
     #[test]
     fn steifigkeit_ist_die_der_lage() {
-        let paar = Stoffpaar { dehnung_oben: 348.274, dicke_oben: 0.4e-3, dicke_unten: 0.4e-3 };
+        let paar = Stoffpaar {
+            dehnung_oben: 348.274,
+            dicke_oben: 0.4e-3,
+            dicke_unten: 0.4e-3,
+            biegung_oben: 2482.2424e-9,
+            biegung_unten: 2482.2424e-9,
+        };
         assert!((paar.steifigkeit_einzeln() - 348.274).abs() < 1e-9);
         assert!((paar.steifigkeit(1) - 348.274).abs() < 1e-9);
         assert!((paar.steifigkeit(10) - 3482.74).abs() < 1e-9);
@@ -367,7 +508,7 @@ mod tests {
     fn versatz_wird_gehalten() {
         let mut x = vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.4e-3]];
         let b = Bindung { punkt: 3, dreieck: [0, 1, 2], bary: [0.0, 0.5, 0.5], versatz: [0.0, 0.0, 0.4e-3] };
-        let z = Zone { name: "t".into(), bindungen: vec![b], steifigkeit: 1.0 };
+        let z = Zone { name: "t".into(), bindungen: vec![b], steifigkeit: 1.0, biegefaktor: 1.0 };
         assert!(z.groesster_abstand(&x) < 1e-12);
         // 2 mm seitlich verschoben: die Feder muss ziehen, nicht nur den Abstand halten.
         x[3][0] += 2e-3;

@@ -689,6 +689,11 @@ impl Platzierung {
     /// stiffness comes from the two materials ([`crate::klebung::Stoffpaar`]),
     /// the rest offset from where the pieces actually lie.
     ///
+    /// The pair also carries the plate values of both layers, from which the
+    /// zone derives its bending factor: applied through
+    /// [`crate::Szene::klebungen_setzen`], the bonded area then bends like the
+    /// laminate of the total thickness instead of like two separate sheets.
+    ///
     /// The number returned with each zone counts the points of the upper piece
     /// that found **no** partner below - an open glued border, or a piece that
     /// does not lie on the one it is bonded to. Both go to the report, so a zone
@@ -701,6 +706,8 @@ impl Platzierung {
                 dehnung_oben: o.vorgabe.material.dehnung_n_m,
                 dicke_oben: o.vorgabe.material.dicke_m,
                 dicke_unten: u.vorgabe.material.dicke_m,
+                biegung_oben: o.vorgabe.material.biegung_nm,
+                biegung_unten: u.vorgabe.material.biegung_nm,
             };
             // Suchradius: der Abstand, in dem beide Teile platziert wurden,
             // plus Dicken und ein Zuschlag - eine Kante direkt auf der anderen

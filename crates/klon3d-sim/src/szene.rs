@@ -140,6 +140,10 @@ pub struct Szene {
     pub abstand: Gruppe<2>,
     pub naht: Gruppe<2>,
     pub biegung: Gruppe<4>,
+    /// Compliance of the bending constraints as built, before any glue zone
+    /// divided it by [`crate::klebung::Zone::biegefaktor`]. Set by
+    /// [`Self::klebungen_setzen`] so that changing zones cannot compound.
+    pub biegung_grund: Vec<f64>,
     /// Dreiecke (globale Punktindizes).
     pub dreiecke: Vec<[u32; 3]>,
     /// Je Dreieck die Inverse der 2×2-Ruhematrix [p1−p0, p2−p0] (reduziert,
@@ -324,6 +328,8 @@ impl Szene {
 
         let np = x.len();
         let w = masse.iter().map(|&m| if m > 0.0 { 1.0 / m } else { 0.0 }).collect();
+        let biegung = Gruppe::geordnet(b_p, b_r, b_a, np);
+        let biegung_grund = biegung.nachgiebigkeit.clone();
         Szene {
             v: vec![[0.0; 3]; np],
             w,
@@ -332,7 +338,8 @@ impl Szene {
             reibung,
             abstand: Gruppe::geordnet(a_p, a_r, a_a, np),
             naht: Gruppe::geordnet(n_p, n_r, n_a, np),
-            biegung: Gruppe::geordnet(b_p, b_r, b_a, np),
+            biegung,
+            biegung_grund,
             dreiecke,
             ruhe_inv,
             teile,
@@ -342,6 +349,50 @@ impl Szene {
             param,
             zeit: 0.0,
             x,
+        }
+    }
+
+    /// Bending energy of the current shape, in J: `½·θ²/α` summed over the
+    /// bending constraints, `θ` the dihedral angle.
+    ///
+    /// This is the quantity plate theory calls `½·D·κ²·A`, and unlike a
+    /// deflection measurement it does not depend on how stiff the mesh happens
+    /// to be against other deformation modes. A piece bent into a circular arc
+    /// has no membrane strain at all, so the number is the bending stiffness and
+    /// nothing else - the measure for whether a bonded pair carries `8·D` like
+    /// the laminate or only `2·D` like two loose layers.
+    pub fn biegeenergie(&self) -> f64 {
+        let mut e = 0.0;
+        for (c, p) in self.biegung.punkte.iter().enumerate() {
+            let q = p.map(|i| self.x[i as usize]);
+            let Some((theta, _)) = crate::cpu::dieder(q) else { continue };
+            e += 0.5 * theta * theta / self.biegung.nachgiebigkeit[c];
+        }
+        e
+    }
+
+    /// Sets the glue zones and applies their bending term to the bending
+    /// constraints inside the bonded area.
+    ///
+    /// Every call starts from the compliance the constraints were built with
+    /// ([`Self::biegung_grund`]), so replacing or repeating the zones cannot
+    /// compound the factor. A zone whose factor is 1, or that covers no
+    /// interior constraint, changes nothing.
+    ///
+    /// The bending term is limited to the bonded area: only a constraint whose
+    /// two triangles are **both** bonded is stiffened, so a glued
+    /// reinforcement stiffens the patch it covers, not the whole piece.
+    pub fn klebungen_setzen(&mut self, zonen: Vec<crate::klebung::Zone>) {
+        self.klebungen = zonen;
+        self.biegung.nachgiebigkeit.clone_from(&self.biegung_grund);
+        for z in &self.klebungen {
+            let f = z.biegefaktor;
+            if f <= 0.0 || (f - 1.0).abs() < 1e-12 {
+                continue;
+            }
+            for c in z.biege_constraints(self) {
+                self.biegung.nachgiebigkeit[c] /= f;
+            }
         }
     }
 

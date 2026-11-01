@@ -164,7 +164,7 @@ every torso height. Also, the bust lies at 120 cm, not at
 | **Subdivision** | subdivide both seam partners equally by **length fraction** as in CLO (§4 of the specification), point nodes of both sides merged up to 2 mm; result: point pairs per sub-seam; `klon3d netz` | **done** (finding 33) |
 | Seams | support springs between the partners, 6 mm overlap seam in the middle | flush seam with bending across the seam **done** (finding 34); the overlap seam comes with the glue zones |
 | Reduction | scale rest lengths: torso 5.5%, sleeves 1–2%, cuff 5% | **done** (finding 34): rest length × (1 − r), mass of the cut piece × (1 − r)²; if the reduction is already in the pattern (Bluse3), r = 0 |
-| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO's *Gluing* (Glue Fill by outline, Glue Brush painted freely) | **done** as a bond that holds the offset vector (`klebung.rs`, task #11): no sliding, load carried across, `klebt <Teil>` in the placement file; **not** the bending of the bonded plate, and not against the body ("Tack on Avatar") |
+| **Glue zones** | areas that bond two layers firmly: laminate (the whole area of a piece), reinforcement and appliqué (internal shape), overlap seam as a glued strip. Model: CLO's *Gluing* (Glue Fill by outline, Glue Brush painted freely) | **done** as a bond that holds the offset vector (`klebung.rs`, task #11): no sliding, load carried across, `klebt <Teil>` in the placement file; **done** also the bending of the bonded pair (`Stoffpaar::biegefaktor`, task #13): a zone over the whole face bends like the laminate of the same thickness; not against the body ("Tack on Avatar") |
 
 **Acceptance criterion:** all seam pairs of equal length, deviation ≤ 0.08 cm —
 the criterion from `pruef_bluse3.py`. **Passed** (finding 32,
@@ -264,14 +264,35 @@ gap and the points without a counterpart.
 
 What that does and does not give: two bonded layers no longer slide, and a
 displacement of one layer carries the other along (test `klebung`). The
-**bending** of the bonded plate is not reproduced, and the comparison planned
-here therefore does not separate the cases: on a 200 × 40 mm strip held at both
-ends, two loose layers, two bonded layers and one 0.8 mm laminate sag within
-0.2 % of each other (9.254 / 9.254 / 9.235 mm), because the sag is carried by
-membrane tension and `2 × 348 N/m` in parallel equals the laminate's `696 N/m`.
-Reproducing the laminate's plate stiffness (19,858 against 2 × 2,482) needs a
-bending term over the bonded pair, not more glue springs. Model for the user
-interface: CLO help "New in…" (Glue Fill, Glue Brush).
+comparison planned here does **not** separate the cases: on a 200 × 40 mm strip
+held at both ends, two loose layers, two bonded layers and one 0.8 mm laminate
+sag within 0.2 % of each other (9.254 / 9.254 / 9.235 mm), because the sag is
+carried by membrane tension and `2 × 348 N/m` in parallel equals the laminate's
+`696 N/m`. That test stands, with its explanation, and would fail if the strip
+ever started to depend on bending.
+
+**Bending of the bonded pair** (task #13): the bond is a shear spring and
+cannot make a plate, so the zone carries a bending term of its own. Every
+bending constraint whose two triangles lie **inside** the bonded area has its
+compliance divided by the pair's factor, derived from the common neutral axis
+(`Stoffpaar::biegefaktor`, `4` for two equal layers). That reproduces the
+`Latex_Laminat_2x0.4mm` row of `MATERIAL.md` exactly — measured on a strip bent
+onto a circular arc (no membrane strain), the bonded pair carries `0.0178 µJ`
+against the laminate's `0.0178 µJ`, and `4.0000×` two loose layers
+(`0.0044 µJ`). The factor stays inside the zone: a patch covering half a piece
+stiffens that half plus one mesh element of border, never the rest.
+`Szene::klebungen_setzen` applies it and starts from the as-built compliance, so
+repeating or removing zones cannot compound.
+
+Limits of the term: the factor is one number for the pair, so layers of
+*different* thickness get the parallel-axis share distributed in proportion to
+`D` rather than to `D + E·t·c²`; the equal-layer case of `MATERIAL.md` is exact.
+Deflections of very floppy pieces are not measurable in this model at useful
+mesh sizes — a 40 mm cantilever shears instead of bending and responds to a 10×
+stiffer bending constraint by 0.03 %, which is why the acceptance measures the
+plate stiffness through bending energy at a prescribed curvature.
+
+Model for the user interface: CLO help "New in…" (Glue Fill, Glue Brush).
 
 ## Stage 5 — Inspection output
 
