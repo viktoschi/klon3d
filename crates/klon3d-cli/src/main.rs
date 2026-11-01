@@ -785,8 +785,10 @@ fn befehl_roehre(args: &[String]) -> ExitCode {
     use klon3d_sim::{ausgabe, CpuReferenz, Material};
 
     const AUFRUF: &str = "Aufruf: klon3d roehre [--material radical|retifist] [--reduktion <%>] \
-                          [--kante <mm>] [--spalt] [--rutsch <s>] [--obj <datei.obj>]";
+                          [--kante <mm>] [--spalt] [--rutsch <s>] [--obj <datei.obj>] [--gpu]";
     let mut r = Roehre::default();
+    // Step 4b: the implicit step on the GPU instead of the XPBD reference.
+    let mut gpu = false;
     let mut rutsch: Option<f64> = None;
     let mut obj: Option<PathBuf> = None;
     let zahl = |a: &str| a.replace(',', ".").parse::<f64>().ok();
@@ -803,6 +805,11 @@ fn befehl_roehre(args: &[String]) -> ExitCode {
             "--obj" => wert.map(|w| obj = Some(PathBuf::from(w))).is_some(),
             "--spalt" => {
                 r.anfang_mit_spalt = true;
+                schritt = 1;
+                true
+            }
+            "--gpu" => {
+                gpu = true;
                 schritt = 1;
                 true
             }
@@ -840,9 +847,21 @@ fn befehl_roehre(args: &[String]) -> ExitCode {
         s.biegung.len(),
         s.param.unterschritte
     );
-    let mut rw = CpuReferenz::neu();
+    let mut rw: Box<dyn klon3d_sim::Rechenweg> = if gpu {
+        let loeser = match klon3d_sim::GpuLoeser::neu() {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("GPU: {e} (ohne --gpu rechnet die XPBD-Referenz)");
+                return ExitCode::FAILURE;
+            }
+        };
+        println!("  Rechenweg    GPU (f32, wgpu) auf {}, impliziter Schritt", loeser.geraet());
+        Box::new(klon3d_sim::ImplizitCg::mit_loeser(klon3d_sim::ImplizitParameter::default(), Box::new(loeser)))
+    } else {
+        Box::new(CpuReferenz::neu())
+    };
     let t0 = std::time::Instant::now();
-    let lauf = bis_zur_ruhe(&mut s, &mut rw, 1200, 1e-4, 10);
+    let lauf = bis_zur_ruhe(&mut s, rw.as_mut(), 1200, 1e-4, 10);
     let dauer = t0.elapsed().as_secs_f64();
     let e = r.auswerten(&s);
     println!(

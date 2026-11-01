@@ -9,6 +9,12 @@ license.workspace = true
 [dependencies]
 klon3d-pattern = { path = "../klon3d-pattern" }
 klon3d-mesh = { path = "../klon3d-mesh" }
+# Step 4b: the CG solve as a compute shader (ADR-018). `wgpu` is built without
+# `metal` and `webgpu`: the project runs on Windows and Linux, and the fewer
+# backends are compiled, the shorter the build.
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "gles", "vulkan", "wgsl"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
 
 [dev-dependencies]
 klon3d-koerper = { path = "../klon3d-koerper" }

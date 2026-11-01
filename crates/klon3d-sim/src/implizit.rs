@@ -70,7 +70,246 @@ fn feder_paare(fe: &Feder) -> impl Iterator<Item = (usize, usize, f64)> + '_ {
 }
 
 /// 3×3-Matrix, zeilenweise.
-type M3 = [[f64; 3]; 3];
+pub type M3 = [[f64; 3]; 3];
+
+/// Eine Abstands-Constraint, wie das CG sie sieht: Punktpaar, Steifigkeit,
+/// **aktuelle** Richtung und Querfaktor `max(0, 1 − L₀/l)`. Kanten und Nähte
+/// haben dieselbe Form; der Unterschied ist nur, woher `k` kommt.
+#[derive(Debug, Clone, Copy)]
+pub struct Kante {
+    pub i: u32,
+    pub j: u32,
+    pub k: f64,
+    pub richtung: [f64; 3],
+    pub quer: f64,
+}
+
+/// Eine Biege-Constraint: die vier Punkte, der Gradient des Diederwinkels und
+/// die Steifigkeit (Gauß-Newton-Glied `k·∇θ·∇θᵀ`).
+#[derive(Debug, Clone, Copy)]
+pub struct Biegung {
+    pub punkte: [u32; 4],
+    pub grad: [[f64; 3]; 4],
+    pub k: f64,
+}
+
+/// Das lineare System **eines Unterschritts**, in Feldern je Punkt bzw. je
+/// Constraint — die Form, die auf der GPU ohne Zusammenbau und ohne Atomics
+/// gelesen wird.
+///
+/// Kräfte, Kontakte, Reibung und die Körperabfragen bleiben beim Aufrufer; hier
+/// steht nur, was das CG braucht. `kanten`, `naehte` und `biegungen` liegen in
+/// der Reihenfolge der Szene (nach Farbe geordnet), damit die Reihenfolge der
+/// Summation und damit das Ergebnis der CPU-Fassung erhalten bleibt.
+///
+/// Federn der Selbstkollision und der Klebezonen (Punkt–Dreieck,
+/// Kante–Kante) stehen als `federn` daneben: sie sind keine Kanten, ihre
+/// 3×3-Blöcke hängen an fünf Punkten. Die CPU rechnet sie mit; ein Löser, der
+/// sie nicht kann, lehnt den Schritt ab, statt sie stillschweigend
+/// wegzulassen ([`Loeser::loese`]).
+#[derive(Debug)]
+pub struct System<'a> {
+    pub h: f64,
+    /// Luftdämpfung (1/s).
+    pub c: f64,
+    pub cg_max: usize,
+    pub cg_toleranz: f64,
+    pub masse: &'a [f64],
+    pub w: &'a [f64],
+    pub v: &'a [[f64; 3]],
+    pub kanten: Vec<Kante>,
+    pub naehte: Vec<Kante>,
+    pub biegungen: Vec<Biegung>,
+    pub federn: Vec<Feder>,
+    /// Rechte Seite `b = h·(f − h·H·v)`.
+    pub rhs: Vec<[f64; 3]>,
+    /// Inverse der 3×3-Diagonalblöcke von `A` (Block-Jacobi).
+    pub pinv: Vec<M3>,
+}
+
+impl System<'_> {
+    /// `H·p` — Steifigkeit ohne Masse und ohne Faktor `h²`.
+    ///
+    /// Je Kante und Naht `k·[n·nᵀ + quer·(I − n·nᵀ)]·p`, je Biegung
+    /// `k·∇θ·(Σ ∇θ·p)`, je Feder die Blöcke der Selbstkollision.
+    pub fn mal_h(&self, p: &[[f64; 3]], out: &mut [[f64; 3]]) {
+        for o in out.iter_mut() {
+            *o = [0.0; 3];
+        }
+        for k in self.kanten.iter().chain(&self.naehte) {
+            let (i, j) = (k.i as usize, k.j as usize);
+            let d = sub(p[i], p[j]);
+            let bd = mul(add(mul(k.richtung, dot(k.richtung, d) * (1.0 - k.quer)), mul(d, k.quer)), k.k);
+            out[i] = add(out[i], bd);
+            out[j] = sub(out[j], bd);
+        }
+        for b in &self.biegungen {
+            let idx = b.punkte.map(|q| q as usize);
+            let gp: f64 = (0..4).map(|m| dot(b.grad[m], p[idx[m]])).sum();
+            for m in 0..4 {
+                out[idx[m]] = add(out[idx[m]], mul(b.grad[m], b.k * gp));
+            }
+        }
+        for fe in &self.federn {
+            for (q, r, om) in feder_paare(fe) {
+                let t = mul(m3_mal(&fe.block, sub(p[q], p[r])), om);
+                out[q] = add(out[q], t);
+                out[r] = sub(out[r], t);
+            }
+        }
+    }
+
+    /// `A·p = M(1 + h·c)·p + h²·H·p`.
+    pub fn mal_a(&self, p: &[[f64; 3]], out: &mut [[f64; 3]]) {
+        self.mal_h(p, out);
+        for i in 0..p.len() {
+            out[i] = add(mul(out[i], self.h * self.h), mul(p[i], self.masse[i] * (1.0 + self.h * self.c)));
+        }
+    }
+
+    /// Die 3×3-Diagonalblöcke von `A` (Vorkonditionierer), noch nicht invertiert.
+    pub fn diag(&self) -> Vec<M3> {
+        let h2 = self.h * self.h;
+        let mut diag: Vec<M3> = (0..self.masse.len())
+            .map(|i| {
+                let mut m = [[0.0; 3]; 3];
+                m3_add_skal(&mut m, self.masse[i] * (1.0 + self.h * self.c));
+                m
+            })
+            .collect();
+        for k in self.kanten.iter().chain(&self.naehte) {
+            for q in [k.i as usize, k.j as usize] {
+                m3_add_skal(&mut diag[q], k.k * h2 * k.quer);
+                m3_add_aus(&mut diag[q], k.richtung, k.richtung, k.k * h2 * (1.0 - k.quer));
+            }
+        }
+        for b in &self.biegungen {
+            for m in 0..4 {
+                let q = b.punkte[m] as usize;
+                m3_add_aus(&mut diag[q], b.grad[m], b.grad[m], b.k * h2);
+            }
+        }
+        for fe in &self.federn {
+            for (q, r, om) in feder_paare(fe) {
+                for p in [q, r] {
+                    for (a, z) in diag[p].iter_mut().enumerate() {
+                        for (b, d) in z.iter_mut().enumerate() {
+                            *d += h2 * om * fe.block[a][b];
+                        }
+                    }
+                }
+            }
+        }
+        diag
+    }
+}
+
+/// Nimmt an einem festgelegten Punkt die Normalkomponente heraus.
+pub(crate) fn filtern(fest: &Option<Fest>, v: [f64; 3]) -> [f64; 3] {
+    match fest {
+        Some(fe) => sub(v, mul(fe.normale, dot(v, fe.normale))),
+        None => v,
+    }
+}
+
+/// Was ein Löser zurückschreibt: wie viele CG-Iterationen er gebraucht hat und
+/// wie weit er gekommen ist. Ein Löser, der sein Budget durchrechnet (die GPU),
+/// meldet seine Höchstzahl.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CgLauf {
+    pub iterationen: usize,
+    pub nicht_konvergiert: bool,
+    /// `sqrt(‖r‖²/‖b‖²)` am Ende.
+    pub rest: f64,
+}
+
+/// Ein Löser für `A·Δv = b`. Die CPU-Fassung ist die Referenz; die GPU-Fassung
+/// (`f32`, `wgpu`) muss dasselbe Ergebnis liefern, und der Vergleich ist eine
+/// Zahl, keine Behauptung ([`crate::gpu`]).
+pub trait Loeser: std::fmt::Debug {
+    /// Name für den Bericht, z. B. `"CPU (f64)"`.
+    fn name(&self) -> &'static str;
+    /// Löst das System und schreibt `Δv` (Startwert: Warmstart des Aufrufers).
+    fn loese(&mut self, sys: &System<'_>, fest: &[Option<Fest>], dv: &mut [[f64; 3]]) -> CgLauf;
+    /// `A·p` ohne Filter, für den Freigabe-Durchgang (Normalkraft aus dem Rest).
+    fn mal_a(&mut self, sys: &System<'_>, p: &[[f64; 3]], out: &mut [[f64; 3]]);
+}
+
+/// Der CPU-Löser: matrixfreies PCG in `f64`, genau das Verfahren, das die
+/// Referenz bisher im Schritt selbst hatte.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CpuLoeser;
+
+impl Loeser for CpuLoeser {
+    fn name(&self) -> &'static str {
+        "CPU (f64)"
+    }
+
+    fn mal_a(&mut self, sys: &System<'_>, p: &[[f64; 3]], out: &mut [[f64; 3]]) {
+        sys.mal_a(p, out);
+    }
+
+    /// Modifiziertes PCG (Baraff & Witkin 1998): festgelegte Punkte bekommen
+    /// in Normalrichtung die verlangte Geschwindigkeitsänderung, der Filter
+    /// hält sie dort.
+    fn loese(&mut self, sys: &System<'_>, fest: &[Option<Fest>], dv: &mut [[f64; 3]]) -> CgLauf {
+        let (n, w) = (sys.masse.len(), sys.w);
+        let b = &sys.rhs;
+        let pinv = &sys.pinv;
+        // Start: frei wie zuvor, festgelegt auf den Sollwert in Normalrichtung.
+        for i in 0..n {
+            if w[i] <= 0.0 {
+                dv[i] = [0.0; 3];
+                continue;
+            }
+            if let Some(fe) = fest[i] {
+                let soll = fe.vn_soll - dot(sys.v[i], fe.normale);
+                dv[i] = add(filtern(&fest[i], dv[i]), mul(fe.normale, soll));
+            }
+        }
+        let mut ap = vec![[0.0; 3]; n];
+        sys.mal_a(dv, &mut ap);
+        let mut r: Vec<[f64; 3]> = (0..n).map(|i| if w[i] > 0.0 { filtern(&fest[i], sub(b[i], ap[i])) } else { [0.0; 3] }).collect();
+        let bb: f64 = (0..n).map(|i| if w[i] > 0.0 { let fb = filtern(&fest[i], b[i]); dot(fb, m3_mal(&pinv[i], fb)) } else { 0.0 }).sum();
+        let mut z: Vec<[f64; 3]> = (0..n).map(|i| m3_mal(&pinv[i], r[i])).collect();
+        let mut cdir: Vec<[f64; 3]> = (0..n).map(|i| filtern(&fest[i], z[i])).collect();
+        let mut delta: f64 = (0..n).map(|i| dot(r[i], cdir[i])).sum();
+        // Ziel relativ zu ‖b‖ und zum Anfangsrest, aber nie unter einer
+        // Geschwindigkeitsgenauigkeit von 10⁻⁹ m/s (r·P⁻¹·r ≈ Σ m·Δv²): in
+        // Ruhe ist b ≈ 0, und ein rein relatives Ziel ließe das CG im
+        // Rundungsrauschen weiterlaufen, bis ein winziger Nenner die
+        // Schrittweite sprengt (am 20.10.2026 gesehen: Rest 10¹⁰⁴).
+        let boden: f64 = sys.masse.iter().sum::<f64>() * 1e-18;
+        let ziel = (sys.cg_toleranz * sys.cg_toleranz * bb.max(delta)).max(boden);
+        let mut it = 0;
+        while delta > ziel && it < sys.cg_max {
+            sys.mal_a(&cdir, &mut ap);
+            for i in 0..n {
+                ap[i] = if w[i] > 0.0 { filtern(&fest[i], ap[i]) } else { [0.0; 3] };
+            }
+            let ca: f64 = (0..n).map(|i| dot(cdir[i], ap[i])).sum();
+            if ca <= f64::MIN_POSITIVE || !ca.is_finite() {
+                break;
+            }
+            let alpha = delta / ca;
+            for i in 0..n {
+                dv[i] = add(dv[i], mul(cdir[i], alpha));
+                r[i] = sub(r[i], mul(ap[i], alpha));
+            }
+            for i in 0..n {
+                z[i] = m3_mal(&pinv[i], r[i]);
+            }
+            let neu: f64 = (0..n).map(|i| dot(r[i], z[i])).sum();
+            let beta = neu / delta;
+            delta = neu;
+            for i in 0..n {
+                cdir[i] = if w[i] > 0.0 { filtern(&fest[i], add(z[i], mul(cdir[i], beta))) } else { [0.0; 3] };
+            }
+            it += 1;
+        }
+        CgLauf { iterationen: it, nicht_konvergiert: delta > ziel, rest: (delta / bb.max(boden)).sqrt() }
+    }
+}
 
 fn m3_add_skal(m: &mut M3, s: f64) {
     for (k, z) in m.iter_mut().enumerate() {
@@ -207,12 +446,16 @@ pub struct ImplizitStatistik {
 }
 
 /// Der implizite Rechenweg.
-#[derive(Debug, Clone, Default)]
+///
+/// Der Schritt (Kräfte, Kontakte, Reibung, Körperabfragen) steht hier einmal;
+/// nur das Lösen von `A·Δv = b` geht an einen [`Loeser`]. Vorgabe ist
+/// [`CpuLoeser`] (`f64`); [`Self::mit_loeser`] nimmt die GPU-Fassung
+/// ([`crate::gpu`]).
+#[derive(Debug)]
 pub struct ImplizitCg {
     pub param: ImplizitParameter,
     pub statistik: ImplizitStatistik,
-    /// Je Nahtfeder Richtung und Querfaktor des laufenden Schritts.
-    naht_n: Vec<([f64; 3], f64)>,
+    loeser: Box<dyn Loeser>,
     /// Δv des vorigen Schritts — Startwert des CG (Warmstart). Ohne ihn findet
     /// ein CG mit lokalem Vorkonditionierer die langsame Gesamtbewegung (die
     /// ganze Röhre fällt) erst nach Hunderten Iterationen: mit 50 fiel sie
@@ -228,30 +471,77 @@ pub struct ImplizitCg {
     folge: Vec<u32>,
 }
 
-/// Kontakt eines Punkts im Schritt.
+/// Contact of one point in the current substep: the normal the point is held
+/// along, the normal velocity it must have afterwards, and the body's velocity
+/// there. The filter of the CG is built from the first two; friction uses all
+/// three.
 #[derive(Debug, Clone, Copy)]
-struct Fest {
-    normale: [f64; 3],
-    /// verlangte Normalgeschwindigkeit nach dem Schritt
-    vn_soll: f64,
-    v_koerper: [f64; 3],
+pub struct Fest {
+    pub normale: [f64; 3],
+    /// Normal velocity the point must have after the step (m/s).
+    pub vn_soll: f64,
+    pub v_koerper: [f64; 3],
+}
+
+impl Default for ImplizitCg {
+    fn default() -> Self {
+        ImplizitCg::neu(ImplizitParameter::default())
+    }
 }
 
 impl ImplizitCg {
     pub fn neu(param: ImplizitParameter) -> Self {
-        ImplizitCg { param, statistik: ImplizitStatistik::default(), naht_n: Vec::new(), dv_vorher: Vec::new(), selbst: None, federn: Vec::new(), schnitte: Vec::new(), folge: Vec::new() }
+        ImplizitCg::mit_loeser(param, Box::new(CpuLoeser))
     }
 
-    /// Ein Zeitschritt der Länge `h`.
-    fn schritt(&mut self, s: &mut Szene, h: f64) {
+    /// Derselbe Schritt mit einem anderen Löser für `A·Δv = b`. Der Löser
+    /// bekommt je Unterschritt das System und die Kontakte; alles andere
+    /// (Kräfte, Freigabe-Durchgang, Reibung, Lage) bleibt hier.
+    pub fn mit_loeser(param: ImplizitParameter, loeser: Box<dyn Loeser>) -> Self {
+        ImplizitCg {
+            param,
+            statistik: ImplizitStatistik::default(),
+            loeser,
+            dv_vorher: Vec::new(),
+            selbst: None,
+            federn: Vec::new(),
+            schnitte: Vec::new(),
+            folge: Vec::new(),
+        }
+    }
+
+    /// Name des Lösers, für den Bericht.
+    pub fn loeser_name(&self) -> &'static str {
+        self.loeser.name()
+    }
+
+    /// `A·p` of the system the next substep would solve, computed by this
+    /// backend at the scene's current state. It builds the same system as a
+    /// step and discards everything else - the probe with which step 4b
+    /// compares CPU and GPU operator.
+    pub fn operator(&mut self, s: &mut Szene, p: &[[f64; 3]]) -> Vec<[f64; 3]> {
+        let h = s.param.bild_dt / self.param.schritte_je_bild.max(1) as f64;
+        let (sys, fest, _) = self.system_bauen(s, h);
+        let mut out = vec![[0.0; 3]; p.len()];
+        self.loeser.mal_a(&sys, p, &mut out);
+        let _ = fest;
+        out
+    }
+
+    /// The linear system of one substep: forces, geometry terms, right-hand
+    /// side, preconditioner and the contact set - everything a solver needs,
+    /// from the scene at its current state.
+    ///
+    /// Kept apart from the rest of the step so the operator can be applied
+    /// without running one ([`Self::operator`]); that is how the two backends
+    /// are compared, on the same construction.
+    fn system_bauen<'a>(&mut self, s: &'a mut Szene, h: f64) -> (System<'a>, Vec<Option<Fest>>, Vec<[f64; 3]>) {
         let n = s.x.len();
         let g = s.param.schwerkraft;
         let c = s.param.daempfung;
-        let h2 = h * h;
 
         // Selbstkollision: Nähe-Paare suchen, Federn bilden; die Dämpfung der
         // Annäherung wirkt auf v vor allen anderen Kräften (wie bei CLO).
-        let x_anfang = if self.param.selbstkollision { s.x.clone() } else { Vec::new() };
         self.federn.clear();
         // Klebezonen stehen fest und wirken in jedem Schritt, unabhängig von
         // der Selbstkollision: Eine Zone ist keine Nähe, sondern eine Bindung.
@@ -296,7 +586,7 @@ impl ImplizitCg {
         // physikalische Last (nur Zug, plus Gewicht) für die Reibung.
         let mut f: Vec<[f64; 3]> = (0..n).map(|i| sub(mul(g, s.masse[i]), mul(s.v[i], c * s.masse[i]))).collect();
         let mut last: Vec<[f64; 3]> = (0..n).map(|i| mul(g, s.masse[i])).collect();
-        let mut kk = Vec::with_capacity(s.abstand.len());
+        let mut kanten = Vec::with_capacity(s.abstand.len());
         for (e, &[i, j]) in s.abstand.punkte.iter().enumerate() {
             let (i, j) = (i as usize, j as usize);
             let k = 1.0 / s.abstand.nachgiebigkeit[e];
@@ -311,24 +601,24 @@ impl ImplizitCg {
                 last[i] = add(last[i], fi);
                 last[j] = sub(last[j], fi);
             }
-            kk.push((k, nr, (1.0 - l0 / l).max(0.0)));
+            kanten.push(Kante { i: i as u32, j: j as u32, k, richtung: nr, quer: (1.0 - l0 / l).max(0.0) });
         }
-        let mut naht_n = Vec::with_capacity(s.naht.len());
-        for (c, &[i, j]) in s.naht.punkte.iter().enumerate() {
+        let mut naehte = Vec::with_capacity(s.naht.len());
+        for (e, &[i, j]) in s.naht.punkte.iter().enumerate() {
             let (i, j) = (i as usize, j as usize);
             let d = sub(s.x[j], s.x[i]);
             let l = norm(d);
             // Offen (unendlich, vor dem ersten Kürzen): Ruhelänge = Abstand.
-            let l0 = if s.naht.ruhe[c].is_finite() { s.naht.ruhe[c] } else { l };
+            let l0 = if s.naht.ruhe[e].is_finite() { s.naht.ruhe[e] } else { l };
             let fi = if l0 > 0.0 && l > 1e-12 { mul(d, self.param.naht_k * (l - l0) / l) } else { mul(d, self.param.naht_k) };
             f[i] = add(f[i], fi);
             f[j] = sub(f[j], fi);
             // Richtung und Querfaktor wie bei den Kanten; Länge 0: k·I.
-            naht_n.push(if l0 > 0.0 && l > 1e-12 { (mul(d, 1.0 / l), (1.0 - l0 / l).max(0.0)) } else { ([0.0; 3], 1.0) });
+            let (richtung, quer) = if l0 > 0.0 && l > 1e-12 { (mul(d, 1.0 / l), (1.0 - l0 / l).max(0.0)) } else { ([0.0; 3], 1.0) };
+            naehte.push(Kante { i: i as u32, j: j as u32, k: self.param.naht_k, richtung, quer });
         }
-        self.naht_n = naht_n;
         // Biegung: Kraft und Gauß-Newton-Glied (Gradienten merken).
-        let mut biege: Vec<([usize; 4], [[f64; 3]; 4], f64)> = Vec::with_capacity(s.biegung.len());
+        let mut biegungen = Vec::with_capacity(s.biegung.len());
         for (b, p) in s.biegung.punkte.iter().enumerate() {
             let idx = p.map(|i| i as usize);
             let Some((theta, gr)) = dieder(idx.map(|i| s.x[i])) else { continue };
@@ -336,7 +626,7 @@ impl ImplizitCg {
             for m in 0..4 {
                 f[idx[m]] = sub(f[idx[m]], mul(gr[m], k * (theta - s.biegung.ruhe[b])));
             }
-            biege.push((idx, gr, k));
+            biegungen.push(Biegung { punkte: *p, grad: gr, k });
         }
         for fe in &self.federn {
             for q in 0..5 {
@@ -344,50 +634,29 @@ impl ImplizitCg {
                 f[i] = add(f[i], mul(fe.kraft, fe.gewichte[q]));
             }
         }
+        // Das System dieses Unterschritts. Federn der Selbstkollision und der
+        // Klebezonen stehen darin; Kontakte folgen unten.
+        let mut sys = System {
+            h,
+            c,
+            cg_max: self.param.cg_max,
+            cg_toleranz: self.param.cg_toleranz,
+            masse: &s.masse,
+            w: &s.w,
+            v: &s.v,
+            kanten,
+            naehte,
+            biegungen,
+            federn: std::mem::take(&mut self.federn),
+            rhs: Vec::new(),
+            pinv: Vec::new(),
+        };
         // b = h·(f − h·H·v)
         let mut hv = vec![[0.0; 3]; n];
-        self.mal_h(s, &kk, &biege, &s.v, &mut hv);
-        let rhs: Vec<[f64; 3]> = (0..n).map(|i| mul(sub(f[i], mul(hv[i], h)), h)).collect();
-
+        sys.mal_h(&s.v, &mut hv);
+        sys.rhs = (0..n).map(|i| mul(sub(f[i], mul(hv[i], h)), h)).collect();
         // Diagonalblöcke von A für den Vorkonditionierer.
-        let mut diag: Vec<M3> = (0..n)
-            .map(|i| {
-                let mut m = [[0.0; 3]; 3];
-                m3_add_skal(&mut m, s.masse[i] * (1.0 + h * c));
-                m
-            })
-            .collect();
-        for (e, &[i, j]) in s.abstand.punkte.iter().enumerate() {
-            let (k, nr, quer) = kk[e];
-            for q in [i as usize, j as usize] {
-                m3_add_skal(&mut diag[q], k * h2 * quer);
-                m3_add_aus(&mut diag[q], nr, nr, k * h2 * (1.0 - quer));
-            }
-        }
-        for (c, &[i, j]) in s.naht.punkte.iter().enumerate() {
-            let (nr, quer) = self.naht_n[c];
-            for q in [i as usize, j as usize] {
-                m3_add_skal(&mut diag[q], self.param.naht_k * h2 * quer);
-                m3_add_aus(&mut diag[q], nr, nr, self.param.naht_k * h2 * (1.0 - quer));
-            }
-        }
-        for (idx, gr, k) in &biege {
-            for m in 0..4 {
-                m3_add_aus(&mut diag[idx[m]], gr[m], gr[m], k * h2);
-            }
-        }
-        for fe in &self.federn {
-            for (q, r, om) in feder_paare(fe) {
-                for p in [q, r] {
-                    for (a, z) in diag[p].iter_mut().enumerate() {
-                        for (b, d) in z.iter_mut().enumerate() {
-                            *d += h2 * om * fe.block[a][b];
-                        }
-                    }
-                }
-            }
-        }
-        let pinv: Vec<M3> = diag.iter().map(m3_inv).collect();
+        sys.pinv = sys.diag().iter().map(m3_inv).collect();
 
         // Kontakte: festlegen, lösen, ziehende freigeben, noch einmal lösen.
         let mut fest: Vec<Option<Fest>> = vec![None; n];
@@ -402,18 +671,34 @@ impl ImplizitCg {
                 }
             }
         }
+        (sys, fest, last)
+    }
+
+    /// Ein Zeitschritt der Länge `h`.
+    fn schritt(&mut self, s: &mut Szene, h: f64) {
+        let n = s.x.len();
+        let g = s.param.schwerkraft;
+        // Der Weg vor dem Schritt, für die Stoßprüfung der Selbstkollision.
+        let x_anfang = if self.param.selbstkollision { s.x.clone() } else { Vec::new() };
+        let (sys, mut fest, last) = self.system_bauen(s, h);
         // Warmstart: Δv des vorigen Schritts, beim ersten Schritt h·g.
         let mut dv = if self.dv_vorher.len() == n { self.dv_vorher.clone() } else { vec![mul(g, h); n] };
         let mut fn_kraft = vec![0.0; n];
         for _durchgang in 0..2 {
-            self.loese(s, h, &kk, &biege, &rhs, &pinv, &fest, &mut dv);
+            let lauf = self.loeser.loese(&sys, &fest, &mut dv);
+            self.statistik.loesungen += 1;
+            self.statistik.cg_iterationen += lauf.iterationen;
+            self.statistik.rest_max = self.statistik.rest_max.max(lauf.rest);
+            if lauf.nicht_konvergiert {
+                self.statistik.nicht_konvergiert += 1;
+            }
             // Normalkraft aus dem Rest r = A·Δv − b (in Normalrichtung) / h.
             let mut adv = vec![[0.0; 3]; n];
-            self.mal_a_voll(s, h, &kk, &biege, &dv, &mut adv);
+            self.loeser.mal_a(&sys, &dv, &mut adv);
             let mut frei = false;
             for i in 0..n {
                 if let Some(fe) = fest[i] {
-                    let r = sub(adv[i], rhs[i]);
+                    let r = sub(adv[i], sys.rhs[i]);
                     let fn_i = dot(r, fe.normale) / h;
                     if fn_i < 0.0 {
                         fest[i] = None;
@@ -514,131 +799,6 @@ impl ImplizitCg {
         }
     }
 
-    /// H·p (Steifigkeit ohne Masse und Faktor h²), für die rechte Seite.
-    fn mal_h(&self, s: &Szene, kk: &[(f64, [f64; 3], f64)], biege: &[([usize; 4], [[f64; 3]; 4], f64)], p: &[[f64; 3]], out: &mut [[f64; 3]]) {
-        for o in out.iter_mut() {
-            *o = [0.0; 3];
-        }
-        for (e, &[i, j]) in s.abstand.punkte.iter().enumerate() {
-            let (i, j) = (i as usize, j as usize);
-            let (k, nr, quer) = kk[e];
-            let d = sub(p[i], p[j]);
-            let bd = mul(add(mul(nr, dot(nr, d) * (1.0 - quer)), mul(d, quer)), k);
-            out[i] = add(out[i], bd);
-            out[j] = sub(out[j], bd);
-        }
-        for (c, &[i, j]) in s.naht.punkte.iter().enumerate() {
-            let (i, j) = (i as usize, j as usize);
-            let (nr, quer) = self.naht_n[c];
-            let d = sub(p[i], p[j]);
-            let bd = mul(add(mul(nr, dot(nr, d) * (1.0 - quer)), mul(d, quer)), self.param.naht_k);
-            out[i] = add(out[i], bd);
-            out[j] = sub(out[j], bd);
-        }
-        for (idx, gr, k) in biege {
-            let gp: f64 = (0..4).map(|m| dot(gr[m], p[idx[m]])).sum();
-            for m in 0..4 {
-                out[idx[m]] = add(out[idx[m]], mul(gr[m], k * gp));
-            }
-        }
-        for fe in &self.federn {
-            for (q, r, om) in feder_paare(fe) {
-                let t = mul(m3_mal(&fe.block, sub(p[q], p[r])), om);
-                out[q] = add(out[q], t);
-                out[r] = sub(out[r], t);
-            }
-        }
-    }
-
-    /// A·p = M(1 + hc)·p + h²·H·p.
-    fn mal_a_voll(&self, s: &Szene, h: f64, kk: &[(f64, [f64; 3], f64)], biege: &[([usize; 4], [[f64; 3]; 4], f64)], p: &[[f64; 3]], out: &mut [[f64; 3]]) {
-        self.mal_h(s, kk, biege, p, out);
-        let c = s.param.daempfung;
-        for i in 0..s.x.len() {
-            out[i] = add(mul(out[i], h * h), mul(p[i], s.masse[i] * (1.0 + h * c)));
-        }
-    }
-
-    /// Modifiziertes PCG (Baraff & Witkin 1998): festgelegte Punkte bekommen
-    /// in Normalrichtung die verlangte Geschwindigkeitsänderung, der Filter
-    /// hält sie dort.
-    #[allow(clippy::too_many_arguments)]
-    fn loese(
-        &mut self,
-        s: &Szene,
-        h: f64,
-        kk: &[(f64, [f64; 3], f64)],
-        biege: &[([usize; 4], [[f64; 3]; 4], f64)],
-        b: &[[f64; 3]],
-        pinv: &[M3],
-        fest: &[Option<Fest>],
-        dv: &mut [[f64; 3]],
-    ) {
-        let n = s.x.len();
-        let filter = |i: usize, v: [f64; 3]| -> [f64; 3] {
-            match fest[i] {
-                Some(fe) => sub(v, mul(fe.normale, dot(v, fe.normale))),
-                None => v,
-            }
-        };
-        // Start: frei wie zuvor, festgelegt auf den Sollwert in Normalrichtung.
-        for i in 0..n {
-            if s.w[i] <= 0.0 {
-                dv[i] = [0.0; 3];
-                continue;
-            }
-            if let Some(fe) = fest[i] {
-                let soll = fe.vn_soll - dot(s.v[i], fe.normale);
-                dv[i] = add(filter(i, dv[i]), mul(fe.normale, soll));
-            }
-        }
-        let mut ap = vec![[0.0; 3]; n];
-        self.mal_a_voll(s, h, kk, biege, dv, &mut ap);
-        let mut r: Vec<[f64; 3]> = (0..n).map(|i| if s.w[i] > 0.0 { filter(i, sub(b[i], ap[i])) } else { [0.0; 3] }).collect();
-        let bb: f64 = (0..n).map(|i| if s.w[i] > 0.0 { let fb = filter(i, b[i]); dot(fb, m3_mal(&pinv[i], fb)) } else { 0.0 }).sum();
-        let mut z: Vec<[f64; 3]> = (0..n).map(|i| m3_mal(&pinv[i], r[i])).collect();
-        let mut cdir: Vec<[f64; 3]> = (0..n).map(|i| filter(i, z[i])).collect();
-        let mut delta: f64 = (0..n).map(|i| dot(r[i], cdir[i])).sum();
-        // Ziel relativ zu ‖b‖ und zum Anfangsrest, aber nie unter einer
-        // Geschwindigkeitsgenauigkeit von 10⁻⁹ m/s (r·P⁻¹·r ≈ Σ m·Δv²): in
-        // Ruhe ist b ≈ 0, und ein rein relatives Ziel ließe das CG im
-        // Rundungsrauschen weiterlaufen, bis ein winziger Nenner die
-        // Schrittweite sprengt (am 20.10.2026 gesehen: Rest 10¹⁰⁴).
-        let boden: f64 = s.masse.iter().sum::<f64>() * 1e-18;
-        let ziel = (self.param.cg_toleranz * self.param.cg_toleranz * bb.max(delta)).max(boden);
-        let mut it = 0;
-        self.statistik.loesungen += 1;
-        while delta > ziel && it < self.param.cg_max {
-            self.mal_a_voll(s, h, kk, biege, &cdir, &mut ap);
-            for i in 0..n {
-                ap[i] = if s.w[i] > 0.0 { filter(i, ap[i]) } else { [0.0; 3] };
-            }
-            let ca: f64 = (0..n).map(|i| dot(cdir[i], ap[i])).sum();
-            if ca <= f64::MIN_POSITIVE || !ca.is_finite() {
-                break;
-            }
-            let alpha = delta / ca;
-            for i in 0..n {
-                dv[i] = add(dv[i], mul(cdir[i], alpha));
-                r[i] = sub(r[i], mul(ap[i], alpha));
-            }
-            for i in 0..n {
-                z[i] = m3_mal(&pinv[i], r[i]);
-            }
-            let neu: f64 = (0..n).map(|i| dot(r[i], z[i])).sum();
-            let beta = neu / delta;
-            delta = neu;
-            for i in 0..n {
-                cdir[i] = if s.w[i] > 0.0 { filter(i, add(z[i], mul(cdir[i], beta))) } else { [0.0; 3] };
-            }
-            it += 1;
-        }
-        self.statistik.cg_iterationen += it;
-        self.statistik.rest_max = self.statistik.rest_max.max((delta / bb.max(boden)).sqrt());
-        if delta > ziel {
-            self.statistik.nicht_konvergiert += 1;
-        }
-    }
 }
 
 impl Rechenweg for ImplizitCg {
