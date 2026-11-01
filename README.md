@@ -72,10 +72,18 @@ klon3d vergleich <a.obj> <b.obj>                    surface distance between two
 
 ## Test data
 
-- **In the repository:** the sample patterns under `crates/klon3d-pattern/tests/muster/` — the author's own
-  garments, published under the same license as the code.
-- **Fetched by CI:** the 47 public CLO projects of [tabjy/clo3d-patterns](https://github.com/tabjy/clo3d-patterns)
-  (CC BY-SA 4.0), pinned to commit `22d0c8a`. Point `KLON3D_FREMD` at a local clone to run those tests yourself.
+Two kinds of input, and either one is enough to exercise the whole pipeline:
+
+- **Seamly2D patterns** (`.sm2d`) — the author's own garments under
+  `crates/klon3d-pattern/tests/muster/`, published under the same license as the code. `klon3d punkte`,
+  `umriss`, `naehte`, `netz`, `dxf` and `anziehen` all start here.
+- **CLO projects** (`.zprj`) — `klon3d zprj <project.zprj>` reads pieces, seams, fabrics and the stored 3D
+  mesh; `klon3d anziehen <pattern.sm2d> --zprj <project.zprj>` takes the **body** from the project instead of
+  from a `.smis` measurement file. The 47 public projects of
+  [tabjy/clo3d-patterns](https://github.com/tabjy/clo3d-patterns) (CC BY-SA 4.0) are the test corpus CI
+  fetches, pinned to commit `22d0c8a`; point `KLON3D_FREMD` at a local clone to run those tests yourself. A
+  test that wants to run on a CLO project therefore does not need a pattern library at all — the project
+  carries pattern, seams and body in one file.
 - **Not distributable:** tests that need CLO's avatar data (`*_clo.rs`, `CLO_FEMALE`) or the author's private
   reference projects. Without the data they report `übersprungen` (skipped) and pass.
 
