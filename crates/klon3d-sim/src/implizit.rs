@@ -528,6 +528,17 @@ impl ImplizitCg {
         out
     }
 
+    /// The system the next substep would solve, from the scene at its current
+    /// state. For measuring a backend on a fixed system instead of on a whole
+    /// frame (`crates/klon3d-sim/examples/gpu_takt.rs`).
+    ///
+    /// Building it has side effects on this step (the springs of the substep
+    /// are taken into the system), so it is not a pure getter.
+    pub fn system_fuer<'a>(&mut self, s: &'a mut Szene) -> System<'a> {
+        let h = s.param.bild_dt / self.param.schritte_je_bild.max(1) as f64;
+        self.system_bauen(s, h).0
+    }
+
     /// The linear system of one substep: forces, geometry terms, right-hand
     /// side, preconditioner and the contact set - everything a solver needs,
     /// from the scene at its current state.

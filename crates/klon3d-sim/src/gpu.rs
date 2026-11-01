@@ -1,13 +1,29 @@
 //! Step 4b: the implicit step's CG solve on the GPU (`wgpu`, `f32`).
 //!
-//! **One kernel, one submission.** The whole PCG runs inside a single compute
-//! shader: start values, `A·p`, the preconditioner, the reductions and the
-//! updates, separated by `workgroupBarrier` inside one workgroup. A garment has
-//! a few thousand points; a dispatch per phase would cost more than the work
-//! (measured: 5 dispatches per iteration, 40 µs each, against a CPU iteration
-//! of about the same length). One workgroup is 1024 lanes on one SM — slower
-//! per lane than the full card, but without a host round trip and without
-//! dispatch overhead between iterations.
+//! **The operator runs over the whole card, the rest on one workgroup.** `A·p`
+//! has no dependency between points, so it runs over the whole grid - one
+//! workgroup per 256 points - and is about 15 times faster that way on the
+//! blouse (0.036 against 0.57 ms per pass, measured by
+//! `crates/klon3d-sim/examples/gpu_takt.rs`). What needs the reductions - the
+//! warm start, α and β with their dot products, the preconditioner, the vector
+//! updates - stays on one workgroup of 1024 lanes.
+//!
+//! **One submission per solve.** All passes of a solve are recorded into one
+//! command buffer and submitted once; the pass boundary is the global barrier
+//! between the operator and the reduction and costs about 6 µs, no round trip.
+//! Until step 4b the whole PCG sat inside a single workgroup so that no barrier
+//! was needed at all - that was correct, but it put the entire solve on one SM
+//! and made it slower than the CPU.
+//!
+//! **The CG state lives in the data buffer**, not in workgroup memory: it has
+//! to survive the pass boundaries. Eight scalar slots next to the vectors hold
+//! δ, ‖b‖², the iteration count, the target, the "converged" flag and α, β.
+//! Once the flag is set, the remaining operator passes return immediately.
+//!
+//! **Recorded iterations follow the previous solve.** A pass that returns at
+//! once still costs its dispatch, so recording `cg_max` passes would waste
+//! ~30 ms per solve on a converged system; the solver records about what the
+//! last solve needed and submits another batch if that was not enough.
 //!
 //! What moves: `A·p = M(1 + h·c)·p + h²·H·p` over distance edges, seams and
 //! bending, gathered per point over a neighbour list; the block-Jacobi
@@ -26,8 +42,8 @@
 //! the state after the same number of frames.
 //!
 //! **Iteration budget.** The CPU stops at `‖r‖ ≤ tol·‖b‖`; the GPU stops at the
-//! same criterion, checked inside the shader between iterations, so the count
-//! is the same as the CPU's.
+//! same criterion, checked in the reduction pass between iterations, so the
+//! count is the same as the CPU's.
 
 use crate::implizit::{CgLauf, CpuLoeser, Fest, Loeser, System};
 
@@ -97,7 +113,7 @@ struct Params {
     h2: f32,
     tol: f32,
     boden: f32,
-    _p: f32,
+    _p: u32,
 }
 
 const WGSL: &str = r#"
@@ -121,7 +137,7 @@ struct Params {
     h2: f32,
     tol: f32,
     boden: f32,
-    _p: f32,
+    _p: u32,
 };
 
 @group(0) @binding(0) var<uniform> par: Params;
@@ -141,7 +157,6 @@ struct Params {
 
 var<workgroup> red_a: array<f32, 1024>;
 var<workgroup> red_b: array<f32, 1024>;
-var<workgroup> sk: array<f32, 8>;
 
 fn lies(off: u32, i: u32) -> vec3<f32> {
     return daten[off + i].xyz;
@@ -173,42 +188,40 @@ fn filtere(i: u32, v: vec3<f32>) -> vec3<f32> {
 
 // ap = M(1 + h c)·p + h^2·H·p gathered over the point's entries.
 // `gefiltert`: the contact filter is applied (what the CG iterates on).
-fn mal_a(tid: u32, off: u32, gefiltert: bool) {
-    for (var i = tid; i < par.n; i = i + 1024u) {
-        let pi = lies(off, i);
-        var sum = vec3<f32>(0.0);
-        let von = anf(i);
-        let bis = anf(i + 1u);
-        for (var e = von; e < bis; e = e + 1u) {
-            let art = eintrag(e, 0u);
-            let c = eintrag(e, 1u);
-            if (art == 0u) {
-                let a = kante[2u * c];
-                let b = kante[2u * c + 1u];
-                let ist_i = u32(a.x) == i;
-                let j = select(u32(a.x), u32(a.y), ist_i);
-                // d ist schon p_selbst - p_partner; der Block ist auf beiden
-                // Seiten derselbe, ein Vorzeichenwechsel wäre hier falsch.
-                let d = pi - lies(off, j);
-                let nr = b.xyz;
-                sum = sum + a.z * (nr * dot(nr, d) * (1.0 - a.w) + d * a.w);
-            } else {
-                let q = biege[6u * c];
-                let idx = vec4<u32>(u32(q.x), u32(q.y), u32(q.z), u32(q.w));
-                var gp = dot(biege[6u * c + 2u].xyz, lies(off, idx.x));
-                gp = gp + dot(biege[6u * c + 3u].xyz, lies(off, idx.y));
-                gp = gp + dot(biege[6u * c + 4u].xyz, lies(off, idx.z));
-                gp = gp + dot(biege[6u * c + 5u].xyz, lies(off, idx.w));
-                let m = eintrag(e, 2u);
-                sum = sum + biege[6u * c + 1u].x * biege[6u * c + 2u + m].xyz * gp;
-            }
+fn punkt(i: u32, off: u32, gefiltert: bool) {
+    let pi = lies(off, i);
+    var sum = vec3<f32>(0.0);
+    let von = anf(i);
+    let bis = anf(i + 1u);
+    for (var e = von; e < bis; e = e + 1u) {
+        let art = eintrag(e, 0u);
+        let c = eintrag(e, 1u);
+        if (art == 0u) {
+            let a = kante[2u * c];
+            let b = kante[2u * c + 1u];
+            let ist_i = u32(a.x) == i;
+            let j = select(u32(a.x), u32(a.y), ist_i);
+            // d ist schon p_selbst - p_partner; der Block ist auf beiden
+            // Seiten derselbe, ein Vorzeichenwechsel wäre hier falsch.
+            let d = pi - lies(off, j);
+            let nr = b.xyz;
+            sum = sum + a.z * (nr * dot(nr, d) * (1.0 - a.w) + d * a.w);
+        } else {
+            let q = biege[6u * c];
+            let idx = vec4<u32>(u32(q.x), u32(q.y), u32(q.z), u32(q.w));
+            var gp = dot(biege[6u * c + 2u].xyz, lies(off, idx.x));
+            gp = gp + dot(biege[6u * c + 3u].xyz, lies(off, idx.y));
+            gp = gp + dot(biege[6u * c + 4u].xyz, lies(off, idx.z));
+            gp = gp + dot(biege[6u * c + 5u].xyz, lies(off, idx.w));
+            let m = eintrag(e, 2u);
+            sum = sum + biege[6u * c + 1u].x * biege[6u * c + 2u + m].xyz * gp;
         }
-        var aus = sum * par.h2 + kopf[i].x * pi;
-        if (gefiltert) {
-            aus = filtere(i, aus);
-        }
-        schreib(par.l_ap, i, aus);
     }
+    var aus = sum * par.h2 + kopf[i].x * pi;
+    if (gefiltert) {
+        aus = filtere(i, aus);
+    }
+    schreib(par.l_ap, i, aus);
 }
 
 // z = P^-1·v, written to `off`.
@@ -250,18 +263,70 @@ fn summe(v: f32, tid: u32, zweite: bool) -> f32 {
     return red_a[0];
 }
 
-@compute @workgroup_size(1024)
-fn rechnen(@builtin(local_invocation_index) tid: u32) {
-    if (par.modus == 1u) {
-        // Nur A·p, für den Vergleich der Rechenwege.
-        mal_a(tid, par.l_p, false);
+// --- the solve, one pass per phase ------------------------------------------
+//
+// The operator runs over the whole grid (0.042 ms on the blouse instead of
+// 0.372 ms on one workgroup); everything else runs on one workgroup, because
+// it needs the reductions. The CG state lives in the eight scalar slots of the
+// data buffer, so it survives the pass boundaries; those are recorded into one
+// submission and cost 6 µs each, no round trip.
+
+// Scalar slot `i` of the solve state.
+fn sk(i: u32) -> f32 {
+    return daten[par.l_sk + i].x;
+}
+
+fn setz_sk(i: u32, v: f32) {
+    daten[par.l_sk + i] = vec4<f32>(v, 0.0, 0.0, 0.0);
+}
+
+/// ap = A·dv for the warm start: unfiltered, before the first direction
+/// exists.
+@compute @workgroup_size(256)
+fn op_warm(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    let stride = nwg.x * 256u;
+    for (var i = gid.x; i < par.n; i = i + stride) {
+        punkt(i, par.l_dv, false);
+    }
+}
+
+/// ap = A·dir for the current iteration, with the contact filter. Returns at
+/// once once the solve has converged, so the remaining passes are free.
+@compute @workgroup_size(256)
+fn op_dir(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    if (sk(4u) > 0.5) {
         return;
     }
+    let stride = nwg.x * 256u;
+    for (var i = gid.x; i < par.n; i = i + stride) {
+        punkt(i, par.l_dir, true);
+    }
+}
+
+/// A·p for the acceptance test and the benchmark: the input vector is in `p`.
+@compute @workgroup_size(256)
+fn op_roh(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    let stride = nwg.x * 256u;
+    for (var i = gid.x; i < par.n; i = i + stride) {
+        punkt(i, par.l_p, false);
+    }
+}
+
+/// Warm start, filtered right-hand side, preconditioned `fb`.
+@compute @workgroup_size(1024)
+fn start(@builtin(local_invocation_index) tid: u32) {
     let n = par.n;
-    // Warmstart und gefilterte rechte Seite.
     for (var i = tid; i < n; i = i + 1024u) {
-        let fb = filtere(i, lies(par.l_b, i));
-        schreib(par.l_fb, i, fb);
+        schreib(par.l_fb, i, filtere(i, lies(par.l_b, i)));
         let k = kopf[i];
         if (k.y <= 0.0) {
             schreib(par.l_dv, i, vec3<f32>(0.0));
@@ -275,16 +340,20 @@ fn rechnen(@builtin(local_invocation_index) tid: u32) {
         schreib(par.l_dv, i, dv);
     }
     workgroupBarrier();
-    mal_a(tid, par.l_dv, false);
-    workgroupBarrier();
-    // r = filter(b - A dv), z = P^-1 r, dir = filter(z), zfb = P^-1 fb.
+    vorkond(tid, par.l_fb, par.l_zfb);
+}
+
+/// r = filter(b - A·dv), z = P^-1 r, dir = filter(z), and the two starting
+/// products. Runs after `operator` on the warm start.
+@compute @workgroup_size(1024)
+fn richtungen(@builtin(local_invocation_index) tid: u32) {
+    let n = par.n;
     for (var i = tid; i < n; i = i + 1024u) {
         let r = filtere(i, lies(par.l_b, i) - lies(par.l_ap, i));
         schreib(par.l_r, i, select(vec3<f32>(0.0), r, kopf[i].y > 0.0));
     }
     workgroupBarrier();
     vorkond(tid, par.l_r, par.l_z);
-    vorkond(tid, par.l_fb, par.l_zfb);
     workgroupBarrier();
     for (var i = tid; i < n; i = i + 1024u) {
         schreib(par.l_dir, i, filtere(i, lies(par.l_z, i)));
@@ -301,76 +370,74 @@ fn rechnen(@builtin(local_invocation_index) tid: u32) {
     let delta0 = summe(a, tid, false);
     let bb = summe(bsum, tid, true);
     if (tid == 0u) {
-        sk[0] = delta0;
-        sk[3] = bb;
+        setz_sk(0u, delta0);
+        setz_sk(1u, bb);
+        setz_sk(2u, 0.0);
+        setz_sk(7u, 0.0);
         let ziel = max(par.tol * par.tol * max(bb, delta0), par.boden);
-        sk[6] = ziel;
-        sk[4] = 0.0;
-        sk[5] = 0.0;
+        setz_sk(3u, ziel);
+        // Converged before the first iteration: the following passes return.
+        setz_sk(4u, select(0.0, 1.0, delta0 <= ziel));
+        setz_sk(5u, 1.0);
+    }
+}
+
+/// One CG iteration, after `operator` wrote A·p for `dir`: α, the updates of
+/// `dv` and `r`, the preconditioner, β and the new direction.
+@compute @workgroup_size(1024)
+fn schritt(@builtin(local_invocation_index) tid: u32) {
+    if (sk(4u) > 0.5) {
+        return;
+    }
+    let n = par.n;
+    var ca = 0.0;
+    for (var i = tid; i < n; i = i + 1024u) {
+        if (kopf[i].y > 0.0) {
+            ca = ca + dot(lies(par.l_dir, i), lies(par.l_ap, i));
+        }
+    }
+    let ca_summe = summe(ca, tid, false);
+    if (tid == 0u) {
+        if (ca_summe > 1e-30) {
+            setz_sk(6u, sk(0u) / ca_summe);
+        } else {
+            setz_sk(6u, 0.0);
+        }
     }
     workgroupBarrier();
-    var it = 0u;
-    loop {
-        if (it >= par.cg_max) {
-            break;
-        }
-        if (sk[0] <= sk[6]) {
-            break;
-        }
-        mal_a(tid, par.l_dir, true);
-        workgroupBarrier();
-        var ca = 0.0;
-        for (var i = tid; i < n; i = i + 1024u) {
-            if (kopf[i].y > 0.0) {
-                ca = ca + dot(lies(par.l_dir, i), lies(par.l_ap, i));
-            }
-        }
-        let ca_summe = summe(ca, tid, false);
-        if (tid == 0u) {
-            if (ca_summe > 1e-30) {
-                sk[4] = sk[0] / ca_summe;
-            } else {
-                sk[4] = 0.0;
-            }
-        }
-        workgroupBarrier();
-        let alpha = sk[4];
-        for (var i = tid; i < n; i = i + 1024u) {
-            schreib(par.l_dv, i, lies(par.l_dv, i) + alpha * lies(par.l_dir, i));
-            schreib(par.l_r, i, lies(par.l_r, i) - alpha * lies(par.l_ap, i));
-        }
-        workgroupBarrier();
-        vorkond(tid, par.l_r, par.l_z);
-        workgroupBarrier();
-        var neu = 0.0;
-        for (var i = tid; i < n; i = i + 1024u) {
-            if (kopf[i].y > 0.0) {
-                neu = neu + dot(lies(par.l_r, i), lies(par.l_z, i));
-            }
-        }
-        let neu_summe = summe(neu, tid, false);
-        if (tid == 0u) {
-            let alt = sk[0];
-            var beta = 0.0;
-            if (alt > 1e-30) {
-                beta = neu_summe / alt;
-            }
-            sk[0] = neu_summe;
-            sk[5] = beta;
-        }
-        workgroupBarrier();
-        let beta = sk[5];
-        for (var i = tid; i < n; i = i + 1024u) {
-            schreib(par.l_dir, i, filtere(i, lies(par.l_z, i) + beta * lies(par.l_dir, i)));
-        }
-        workgroupBarrier();
-        it = it + 1u;
+    let alpha = sk(6u);
+    for (var i = tid; i < n; i = i + 1024u) {
+        schreib(par.l_dv, i, lies(par.l_dv, i) + alpha * lies(par.l_dir, i));
+        schreib(par.l_r, i, lies(par.l_r, i) - alpha * lies(par.l_ap, i));
     }
+    workgroupBarrier();
+    vorkond(tid, par.l_r, par.l_z);
+    workgroupBarrier();
+    var neu = 0.0;
+    for (var i = tid; i < n; i = i + 1024u) {
+        if (kopf[i].y > 0.0) {
+            neu = neu + dot(lies(par.l_r, i), lies(par.l_z, i));
+        }
+    }
+    let neu_summe = summe(neu, tid, false);
     if (tid == 0u) {
-        daten[par.l_sk] = vec4<f32>(sk[0], 0.0, 0.0, 0.0);
-        daten[par.l_sk + 1u] = vec4<f32>(sk[3], 0.0, 0.0, 0.0);
-        daten[par.l_sk + 2u] = vec4<f32>(f32(it), 0.0, 0.0, 0.0);
-        daten[par.l_sk + 3u] = vec4<f32>(sk[6], 0.0, 0.0, 0.0);
+        let alt = sk(0u);
+        var beta = 0.0;
+        if (alt > 1e-30) {
+            beta = neu_summe / alt;
+        }
+        setz_sk(0u, neu_summe);
+        setz_sk(5u, beta);
+        let it = sk(7u) + 1.0;
+        setz_sk(7u, it);
+        setz_sk(2u, it);
+        let fertig = neu_summe <= sk(3u) || it >= f32(par.cg_max);
+        setz_sk(4u, select(0.0, 1.0, fertig));
+    }
+    workgroupBarrier();
+    let beta = sk(5u);
+    for (var i = tid; i < n; i = i + 1024u) {
+        schreib(par.l_dir, i, filtere(i, lies(par.l_z, i) + beta * lies(par.l_dir, i)));
     }
 }
 "#;
@@ -401,10 +468,26 @@ pub struct GpuLoeser {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
+    /// Warm start: dv, filtered rhs, preconditioned fb. One workgroup.
+    op_warm: wgpu::ComputePipeline,
+    /// `A·p` for the search direction, over the whole grid.
+    op_dir: wgpu::ComputePipeline,
+    /// `A·p` for the acceptance test, over the whole grid.
+    op_roh: wgpu::ComputePipeline,
+    /// First r, z, dir and both starting products. One workgroup.
+    richtungen: wgpu::ComputePipeline,
+    /// One CG iteration's reductions and vector updates. One workgroup.
+    schritt: wgpu::ComputePipeline,
     lage: wgpu::BindGroupLayout,
     speicher: Option<Speicher>,
     cpu: CpuLoeser,
     ausweich: usize,
+    /// Milliseconds of the last solve: upload into the buffers, then everything
+    /// the solve itself does including its readback.
+    zeiten: [f64; 2],
+    /// Iterations the previous solve needed, to record passes for about that
+    /// many. The recorded passes past convergence are empty, but not free.
+    letzte_it: usize,
 }
 
 impl std::fmt::Debug for GpuLoeser {
@@ -469,24 +552,46 @@ impl GpuLoeser {
             bind_group_layouts: &[Some(&lage)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("klon3d CG"),
-            layout: Some(&pl),
-            module: &modul,
-            entry_point: Some("rechnen"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipe = |name: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(name),
+                layout: Some(&pl),
+                module: &modul,
+                entry_point: Some(name),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipeline = pipe("start");
+        let op_warm = pipe("op_warm");
+        let op_dir = pipe("op_dir");
+        let op_roh = pipe("op_roh");
+        let richtungen = pipe("richtungen");
+        let schritt = pipe("schritt");
         Ok(GpuLoeser {
             geraet,
             device,
             queue,
             pipeline,
+            op_warm,
+            op_dir,
+            op_roh,
+            richtungen,
+            schritt,
             lage,
             speicher: None,
             cpu: CpuLoeser,
             ausweich: 0,
+            zeiten: [0.0; 2],
+            letzte_it: 0,
         })
+    }
+
+    /// Milliseconds of the last solve: upload into the buffers, then everything
+    /// the solve itself does including its readback. The benchmark
+    /// (`examples/gpu_takt.rs`) reads it to see the share of the transfer.
+    pub fn zeiten(&self) -> [f64; 2] {
+        self.zeiten
     }
 
     /// Backend, device name and device type, for the report.
@@ -775,7 +880,7 @@ impl GpuLoeser {
             h2: (sys.h * sys.h) as f32,
             tol: sys.cg_toleranz as f32,
             boden: (sys.masse.iter().sum::<f64>() * 1e-18) as f32,
-            _p: 0.0,
+            _p: 0,
         }
     }
 
@@ -836,22 +941,69 @@ impl GpuLoeser {
         dv: &mut [[f64; 3]],
     ) -> CgLauf {
         let n = sys.masse.len();
+        let t0 = std::time::Instant::now();
         let s = self.hochladen(sys, fest, dv);
+        let t1 = std::time::Instant::now();
         let par = self.params(&s, sys, 0);
         self.queue
             .write_buffer(&s.params, 0, bytemuck::bytes_of(&par));
-        let mut enc = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            cp.set_pipeline(&self.pipeline);
-            cp.set_bind_group(0, &s.bind, &[]);
-            cp.dispatch_workgroups(1, 1, 1);
-        }
-        self.queue.submit([enc.finish()]);
-        let lage = Lage::neu(n);
-        let (dv_f, sk) = self.lesen_mit_skalaren(&s, lage.dv, n);
+        // All passes of the solve go into one submission: the operator over the
+        // whole grid, the reductions and updates on one workgroup. The pass
+        // boundary is the global barrier between them and costs about 6 µs.
+        //
+        // How many iterations to record is a guess: the passes past convergence
+        // return at once, but each still costs its dispatch. A solve that
+        // covers the budget without converging gets another submission, so the
+        // guess costs at most one extra wait.
+        let gruppen = (n as u32).div_ceil(256).max(1);
+        let mut erste = true;
+        let mut it = 0usize;
+        let (dv_f, sk) = loop {
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let pass =
+                |pipe: &wgpu::ComputePipeline, gruppen: u32, enc: &mut wgpu::CommandEncoder| {
+                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                    cp.set_pipeline(pipe);
+                    cp.set_bind_group(0, &s.bind, &[]);
+                    cp.dispatch_workgroups(gruppen, 1, 1);
+                };
+            if erste {
+                pass(&self.pipeline, 1, &mut enc);
+                pass(&self.op_warm, gruppen, &mut enc);
+                pass(&self.richtungen, 1, &mut enc);
+                erste = false;
+            }
+            let rest = sys.cg_max.saturating_sub(it);
+            let budget = if it == 0 {
+                // First solve: no count to go by yet. Take a guess that
+                // usually covers a whole solve in one submission.
+                let schaetzung = if self.letzte_it > 0 {
+                    self.letzte_it + self.letzte_it / 4 + 8
+                } else {
+                    128
+                };
+                schaetzung.min(rest)
+            } else {
+                rest
+            };
+            for _ in 0..budget {
+                pass(&self.op_dir, gruppen, &mut enc);
+                pass(&self.schritt, 1, &mut enc);
+            }
+            self.queue.submit([enc.finish()]);
+            let lage = Lage::neu(n);
+            let (dv_f, sk) = self.lesen_mit_skalaren(&s, lage.dv, n);
+            it = sk[2] as usize;
+            // Converged, out of budget, or nothing recorded: done.
+            if sk[4] > 0.5 || it >= sys.cg_max || budget == 0 {
+                break (dv_f, sk);
+            }
+        };
+        self.letzte_it = it;
+        let t2 = std::time::Instant::now();
+        self.zeiten = [(t1 - t0).as_secs_f64() * 1e3, (t2 - t1).as_secs_f64() * 1e3];
         for i in 0..n {
             dv[i] = [
                 dv_f[i * 4] as f64,
@@ -869,6 +1021,63 @@ impl GpuLoeser {
         }
     }
 
+    /// Cost of a chain of `pässe` compute passes recorded into one submission
+    /// with one wait, in milliseconds per pass. `art` selects what runs: 0 an
+    /// empty pass, 1 `A·p` on one workgroup, 2 `A·p` over the whole grid.
+    pub fn takt_paesse(
+        &mut self, sys: &System<'_>, p: &[[f64; 3]], pässe: usize, art: u32
+    ) -> f64 {
+        let n = sys.masse.len();
+        let s = self.hochladen(sys, &vec![None; n], &vec![[0.0; 3]; n]);
+        let lage = Lage::neu(n);
+        let mut p_f = Vec::with_capacity(n * 4);
+        for q in p {
+            p_f.extend_from_slice(&[q[0] as f32, q[1] as f32, q[2] as f32, 0.0]);
+        }
+        self.queue
+            .write_buffer(&s.daten, lage.p as u64 * 16, bytemuck::cast_slice(&p_f));
+        let par = self.params(&s, sys, 1);
+        self.queue
+            .write_buffer(&s.params, 0, bytemuck::bytes_of(&par));
+        let gruppen = (n as u32).div_ceil(256).max(1);
+        // 0 = empty pass, 1 = A·p on one workgroup, 2 = A·p over the whole grid.
+        let pipe = match art {
+            0 => &self.richtungen,
+            1 => &self.op_roh,
+            _ => &self.op_roh,
+        };
+        let lauf = || {
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            for _ in 0..pässe {
+                let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                cp.set_bind_group(0, &s.bind, &[]);
+                cp.set_pipeline(pipe);
+                if art != 0 {
+                    cp.dispatch_workgroups(if art == 2 { gruppen } else { 1 }, 1, 1);
+                }
+            }
+            self.queue.submit([enc.finish()]);
+        };
+        lauf();
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .ok();
+        let t0 = std::time::Instant::now();
+        lauf();
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .ok();
+        t0.elapsed().as_secs_f64() * 1e3 / pässe as f64
+    }
+
     /// `A·p` on the device, for the acceptance test.
     pub fn mal_a_roh(&mut self, sys: &System<'_>, p: &[[f64; 3]]) -> Vec<[f64; 3]> {
         let n = sys.masse.len();
@@ -883,14 +1092,15 @@ impl GpuLoeser {
         let par = self.params(&s, sys, 1);
         self.queue
             .write_buffer(&s.params, 0, bytemuck::bytes_of(&par));
+        let gruppen = (n as u32).div_ceil(256).max(1);
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            cp.set_pipeline(&self.pipeline);
+            cp.set_pipeline(&self.op_roh);
             cp.set_bind_group(0, &s.bind, &[]);
-            cp.dispatch_workgroups(1, 1, 1);
+            cp.dispatch_workgroups(gruppen, 1, 1);
         }
         self.queue.submit([enc.finish()]);
         let f = self.lesen(&s, lage.ap, n);
@@ -924,8 +1134,9 @@ impl Loeser for GpuLoeser {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn einstiegspunkt_im_shader() {
-        assert!(super::WGSL.contains("fn rechnen("));
-        assert!(super::WGSL.contains("fn mal_a("));
+    fn einstiegspunkte_im_shader() {
+        for name in ["fn start(", "fn op_warm(", "fn op_dir(", "fn schritt("] {
+            assert!(super::WGSL.contains(name), "{name} fehlt im Shader");
+        }
     }
 }
