@@ -377,7 +377,9 @@ message.
 - [x] 9. Screenshots dark/light with the blouse loaded (environment below): `bilder/`, shown under "Status"
 - [x] 10. Full workspace check: `cargo build --locked --workspace --exclude klon3d-view --all-targets` and
       `cargo test --locked --workspace --exclude klon3d-view` (2026-11-02, on the state merged with `main`)
-- [ ] 11. `git fetch origin && git merge origin/main` (a rebase would need a force push), push, pull request with the template
+- [x] 11. (2026-11-02: PR #37 open, #34 labelled `review`, done comment posted; what remains is the CI run, the review and
+      fixes asked for there – viktoschi merges.)
+      `git fetch origin && git merge origin/main` (a rebase would need a force push), push, pull request with the template
       (`.github/pull_request_template.md`: Change / Evidence / Not checked / Limits and provenance),
       `Closes #34`; then on #34: label `review` instead of `in-progress` and a done comment
       (`tools/task.sh done 34 <session> <pr>` does both where `gh` is available)
