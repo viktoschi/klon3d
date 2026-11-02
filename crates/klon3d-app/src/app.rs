@@ -14,12 +14,12 @@
 //!
 //! ## Loading
 //!
-//! Every load goes through [`App::laden`], which makes the paths absolute first. When a pattern
-//! fails because of its measurement file (not named, missing, unreadable), the request is kept as
-//! [`App::wartend`]: "Maßdatei wählen…" (menu, error window, a dropped `.smis`) then applies to that
-//! pattern, not to the one still shown. Files dropped together are one request
-//! ([`App::dateien_ablegen`]): a pattern is opened with the measurement file and seam list dropped
-//! with it. Every pattern loaded goes to the front of the recently opened ones.
+//! Every load goes through [`App::laden`], which makes the paths absolute (and without `..`)
+//! first. When a pattern fails because of its measurement file (not named, missing, unreadable),
+//! the request is kept as [`App::wartend`]: "Maßdatei wählen…" (menu, error window, a dropped
+//! `.smis`) then applies to that pattern, not to the one still shown. Files dropped together are
+//! one request ([`App::dateien_ablegen`]): a pattern is opened with the measurement file and seam
+//! list dropped with it. Every pattern loaded goes to the front of the recently opened ones.
 //!
 //! ## Shortcuts
 //!
@@ -43,8 +43,8 @@ use eframe::egui;
 use egui::{Key, KeyboardShortcut, Modifiers, Theme};
 
 use crate::anordnung::{
-    self, Anordnung, Anzeige2d, Bereich, Fenster, SCHLUESSEL_ANORDNUNG, SCHLUESSEL_ANZEIGE2D,
-    SCHLUESSEL_ZULETZT,
+    self, Anordnung, Anzeige2d, Bereich, Fenster, ZuletztPruefung, SCHLUESSEL_ANORDNUNG,
+    SCHLUESSEL_ANZEIGE2D, SCHLUESSEL_ZULETZT,
 };
 use crate::ansicht2d::Ansicht2d;
 use crate::bibliothek::Bibliothek;
@@ -162,6 +162,10 @@ pub struct App {
     pub letzter_ordner: PathBuf,
     /// Recently opened patterns, newest first, at most [`anordnung::ZULETZT_MAX`].
     pub zuletzt: Vec<PathBuf>,
+    /// Which of them still exist, checked in the background when the Datei menu opens.
+    pub zuletzt_pruefung: ZuletztPruefung,
+    /// The Datei menu was open in the last frame.
+    pub(crate) datei_menue_offen: bool,
     /// Which panels, windows and toolbars are shown.
     pub anordnung: Anordnung,
     /// The 3D or the 2D window.
@@ -215,7 +219,7 @@ impl App {
             .filter(|e| !e.ordner)
             .map(|e| e.name)
             .collect();
-        App {
+        let mut app = App {
             thema,
             auftrag: None,
             wartend: None,
@@ -236,6 +240,8 @@ impl App {
             informationen: false,
             letzter_ordner,
             zuletzt: anordnung::zuletzt_aus_text(&lies(SCHLUESSEL_ZULETZT).unwrap_or_default()),
+            zuletzt_pruefung: ZuletztPruefung::default(),
+            datei_menue_offen: false,
             anordnung: Anordnung::aus_text(&lies(SCHLUESSEL_ANORDNUNG).unwrap_or_default()),
             aktiv: Fenster::Zwei,
             stoffordner,
@@ -248,7 +254,10 @@ impl App {
             letzte_zeit: None,
             gpu: None,
             titel: None,
-        }
+        };
+        // The stored arrangement may hide the 2D window: then the 3D window is the active one.
+        app.aktiv_pruefen();
+        app
     }
 
     /// Load a pattern with the measurement file it names and the seam list next to it.
@@ -258,8 +267,10 @@ impl App {
         self.laden(Ladeauftrag::neu(pfad.as_ref()))
     }
 
-    /// Load with explicitly chosen files (see [`Ladeauftrag`]). The paths are made absolute
-    /// first, so that the folder remembered from them stays valid in another working folder.
+    /// Load with explicitly chosen files (see [`Ladeauftrag`]). The paths are made absolute and
+    /// freed of `.` and `..` first ([`Ladeauftrag::absolut`]), so that the folder remembered from
+    /// them stays valid in another working folder and one file is one entry of the recently
+    /// opened ones, however it was reached.
     pub fn laden(&mut self, auftrag: Ladeauftrag) -> bool {
         let auftrag = auftrag.absolut();
         match Muster::laden(&auftrag) {
@@ -284,6 +295,7 @@ impl App {
                     self.letzter_ordner = o.to_path_buf();
                 }
                 anordnung::zuletzt_vorne(&mut self.zuletzt, &auftrag.muster);
+                self.zuletzt_pruefung.setzen(&auftrag.muster, true);
                 self.titel = Some(format!("klon3d – {}", m.dateiname()));
                 self.muster = Some(m);
                 self.auftrag = Some(auftrag);
@@ -452,7 +464,10 @@ impl App {
                 self.dateiwahl = Some(Dateiwahl::neu(Zweck::Muster, &self.letzter_ordner))
             }
             Aktion::MusterOeffnen(p) => {
-                self.mit_dateien(Some(p), None, None);
+                // A recent file that failed may be gone: the menu learns it from a new check.
+                if !self.mit_dateien(Some(p), None, None) {
+                    self.zuletzt_pruefung.starten(&self.zuletzt);
+                }
             }
             Aktion::ZuletztLeeren => self.zuletzt.clear(),
             Aktion::MassdateiWaehlen | Aktion::NahtlisteWaehlen => {
@@ -730,6 +745,10 @@ impl eframe::App for App {
         }
         self.abgelegte_dateien(&ctx);
         self.tasten(&ctx);
+        if self.zuletzt_pruefung.abholen(&self.zuletzt) {
+            // Show the result once it is there; the check itself never makes the frame wait.
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         crate::fenster::zeichnen(self, ui);
         self.dialoge(&ctx);

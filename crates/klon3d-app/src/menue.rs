@@ -96,7 +96,12 @@ fn bereich(ui: &mut egui::Ui, app: &mut App, b: Bereich) {
 
 /// The menu bar.
 pub fn menues(app: &mut App, ui: &mut egui::Ui) {
-    ui.menu_button("Datei", |ui| datei(app, ui));
+    let offen = ui.menu_button("Datei", |ui| datei(app, ui)).inner.is_some();
+    // Whether the recent files exist is checked once per opening, in the background.
+    if offen && !app.datei_menue_offen {
+        app.zuletzt_pruefung.starten(&app.zuletzt);
+    }
+    app.datei_menue_offen = offen;
     ui.menu_button("Bearbeiten", |ui| {
         spaeter(ui, "Rückgängig", "Strg+Z");
         spaeter(ui, "Wiederholen", "Strg+Y");
@@ -183,7 +188,9 @@ fn datei(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// Datei › Zuletzt geöffnet: the last patterns, newest first; a file that is gone is shown
-/// disabled. The files are looked at only while this submenu is open.
+/// disabled. The menu does not look at the files: a check in the background, started when the
+/// Datei menu opens, tells which are gone ([`crate::anordnung::ZuletztPruefung`]) – a file on a
+/// disconnected network drive would otherwise block every frame.
 fn zuletzt(app: &mut App, ui: &mut egui::Ui) {
     if app.zuletzt.is_empty() {
         ui.weak("noch keine Muster geöffnet");
@@ -191,7 +198,7 @@ fn zuletzt(app: &mut App, ui: &mut egui::Ui) {
     let namen = anordnung::zuletzt_beschriftungen(&app.zuletzt);
     let mut gewaehlt = None;
     for (p, name) in app.zuletzt.iter().zip(namen) {
-        let da = p.is_file();
+        let da = app.zuletzt_pruefung.da(p) != Some(false);
         let r = ui
             .add_enabled(da, Button::new(name))
             .on_hover_text(p.display().to_string())
@@ -357,8 +364,8 @@ pub fn werkzeugleiste(app: &mut App, ui: &mut egui::Ui) {
             .on_disabled_hover_text(format!("Wiederholen (Strg+Y) – {SPAETER}"));
         ui.separator();
         let ziel = match app.thema {
-            Theme::Dark => "helles",
-            Theme::Light => "dunkles",
+            Theme::Dark => "hellen",
+            Theme::Light => "dunklen",
         };
         if ui
             .button("Hell/Dunkel")
@@ -431,7 +438,8 @@ pub fn werkzeugleiste_2d(app: &mut App, ui: &mut egui::Ui) {
         (
             a.teilnamen,
             "Teilnamen",
-            "Namen der Teile",
+            "Namen der Teile, wo sie hineinpassen; das gewählte Teil und das Teil unter dem \
+             Mauszeiger nennen ihren Namen immer",
             Aktion::TeilnamenUmschalten,
         ),
     ] {

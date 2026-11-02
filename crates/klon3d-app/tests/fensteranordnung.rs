@@ -19,7 +19,8 @@ use klon3d_app::anordnung::{
     SCHLUESSEL_ZULETZT,
 };
 use klon3d_app::ansicht2d::laenge_text;
-use klon3d_app::app::{App, SCHLUESSEL_ORDNER, SCHLUESSEL_THEMA, SPAETER};
+use klon3d_app::app::{App, SPAETER};
+use klon3d_app::dateiwahl::bereinigt;
 use klon3d_app::muster::Nahtstand;
 use klon3d_pattern::geom::{lies_messungen, Auswertung};
 use klon3d_pattern::kanten::Kurvenquelle;
@@ -371,6 +372,19 @@ fn laengen_am_gewaehlten_teil() {
     );
 }
 
+/// Step until the background check of the recent files is done.
+fn pruefung_abwarten(h: &mut Harness<'_, App>) {
+    for _ in 0..500 {
+        h.step();
+        if !h.state().zuletzt_pruefung.laeuft() {
+            h.run();
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("Prüfung der zuletzt geöffneten Muster endet nicht");
+}
+
 #[test]
 fn zuletzt_geoeffnet_im_menue() {
     let ordner = frischer_ordner("zuletzt");
@@ -397,7 +411,7 @@ fn zuletzt_geoeffnet_im_menue() {
     h.run();
     let erwartet: Vec<PathBuf> = [&bluse1, &kopie, &bluse()]
         .iter()
-        .map(|p| std::path::absolute(p).unwrap())
+        .map(|p| bereinigt(&std::path::absolute(p).unwrap()))
         .collect();
     assert_eq!(h.state().zuletzt, erwartet);
     menue_oeffnen(&mut h, &["Datei", "Zuletzt geöffnet"]);
@@ -429,11 +443,28 @@ fn zuletzt_geoeffnet_im_menue() {
     assert_eq!(h.state().muster.as_ref().unwrap().teile.len(), 28);
     assert_eq!(h.state().zuletzt[0], erwartet[2]);
 
-    // A file that is gone is shown disabled, with the reason on hover.
+    // The menu does not look at the files itself: one check in the background per opening of
+    // the Datei menu, however many frames it stays open.
+    pruefung_abwarten(&mut h);
+    let vorher = h.state().zuletzt_pruefung.gestartet;
+    menue_oeffnen(&mut h, &["Datei", "Zuletzt geöffnet"]);
+    for i in 0..30 {
+        let name = ["bluse1_v25.sm2d", "kopie.sm2d", "bluse3_v2.sm2d"][i % 3];
+        let p = im_menue(&h, name).rect().center();
+        h.hover_at(p);
+        h.step();
+    }
+    assert_eq!(h.state().zuletzt_pruefung.gestartet, vorher + 1);
+    menue_schliessen(&mut h, "Datei");
+    pruefung_abwarten(&mut h);
+
+    // A file that is gone is shown disabled, with the reason on hover – once the check that
+    // opening the menu starts has found it.
     std::fs::remove_file(&kopie).unwrap();
     h.ctx
         .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
     menue_oeffnen(&mut h, &["Datei", "Zuletzt geöffnet"]);
+    pruefung_abwarten(&mut h);
     let weg = im_menue(&h, "kopie.sm2d");
     assert!(weg.accesskit_node().is_disabled());
     weg.hover();
@@ -669,11 +700,12 @@ fn klick_auf_eine_naht_zeigt_ihre_eigenschaften() {
 
 #[test]
 fn alter_gespeicherter_stand_startet_mit_vorgaben() {
-    // A storage written by the version before step 7b: theme and folder only.
+    // A storage written by the version before step 7b: theme and folder only, under the keys
+    // that version wrote (literally, not through the constants: a renamed key must fail here).
     let mut speicher = Speicher::default();
-    speicher.0.insert(SCHLUESSEL_THEMA.into(), "hell".into());
+    speicher.0.insert("klon3d.thema".into(), "hell".into());
     speicher.0.insert(
-        SCHLUESSEL_ORDNER.into(),
+        "klon3d.ordner".into(),
         muster_ordner().display().to_string(),
     );
     let mut h = Harness::builder()
@@ -685,6 +717,13 @@ fn alter_gespeicherter_stand_startet_mit_vorgaben() {
     h.run();
     let app = h.state();
     assert_eq!(app.thema, Theme::Light);
+    // The folder comes back: for the dialog, and the library starts in it.
+    assert_eq!(app.letzter_ordner, muster_ordner());
+    assert_eq!(
+        app.bibliothek.liste.ordner,
+        bereinigt(&std::path::absolute(muster_ordner()).unwrap())
+    );
+    assert_eq!(app.aktiv, Fenster::Zwei);
     assert_eq!(app.anordnung, Anordnung::default());
     assert_eq!(app.ansicht.anzeige, Anzeige2d::default());
     assert!(app.zuletzt.is_empty());
@@ -732,6 +771,39 @@ fn alter_gespeicherter_stand_startet_mit_vorgaben() {
     );
     assert!(!h.state().anordnung.bibliothek && h.state().ansicht.anzeige.laengen);
     assert!(flaeche(&h, "Bibliothek").is_none());
+    drop(h);
+
+    // Stored with the 2D window hidden: the 3D window is the active one from the start, not
+    // the hidden one.
+    let mut speicher = Speicher::default();
+    speicher.0.insert(
+        SCHLUESSEL_ANORDNUNG.into(),
+        "fenster3d=1;fenster2d=0".into(),
+    );
+    let mut h = standardfenster(Some(&speicher));
+    h.run();
+    assert_eq!(h.state().aktiv, Fenster::Drei);
+    assert!(flaeche(&h, "2D-Fenster").is_none());
+}
+
+#[test]
+fn zuletzt_ohne_doppel_ueber_punktpunkt() {
+    // `muster_ordner()` reaches the patterns through `..` (as a command line may); the library
+    // lists them under the cleaned folder. Both ways are one entry.
+    let ueber = bluse();
+    assert!(ueber
+        .components()
+        .any(|c| c == std::path::Component::ParentDir));
+    let sauber = bereinigt(&std::path::absolute(&ueber).unwrap());
+    let mut h = fenster();
+    h.run();
+    assert!(h.state_mut().muster_laden(&ueber));
+    assert_eq!(h.state().zuletzt, [sauber.clone()]);
+    assert_eq!(h.state().auftrag.as_ref().unwrap().muster, sauber);
+    assert!(h.state_mut().muster_laden(&sauber));
+    assert_eq!(h.state().zuletzt, [sauber.clone()]);
+    // The folder remembered is the clean one as well.
+    assert_eq!(&h.state().letzter_ordner, sauber.parent().unwrap());
 }
 
 #[test]
@@ -778,4 +850,350 @@ fn anordnung_zuruecksetzen() {
     assert!(h
         .query_by_role_and_label(Role::Button, "Einpassen")
         .is_some());
+}
+
+/// A folder `oben` that holds only the subfolder `muster/` with a copy of the blouse
+/// (`a_bluse.sm2d`, the first row inside) and its measurement file.
+fn ordner_mit_unterordner(name: &str) -> (PathBuf, PathBuf) {
+    let oben = frischer_ordner(name);
+    let unten = oben.join("muster");
+    std::fs::create_dir_all(&unten).unwrap();
+    std::fs::copy(bluse(), unten.join("a_bluse.sm2d")).unwrap();
+    std::fs::copy(
+        muster_ordner().join("measurements.smis"),
+        unten.join("measurements.smis"),
+    )
+    .unwrap();
+    (oben, unten)
+}
+
+/// The row of folder `name` in a listing ("muster/").
+fn ordnerzeile(name: &str) -> String {
+    format!("{name}{}", std::path::MAIN_SEPARATOR)
+}
+
+#[test]
+fn doppelklick_auf_einen_ordner_oeffnet_nur_ihn() {
+    let (oben, unten) = ordner_mit_unterordner("doppelklick-ordner");
+    let mut h = schnelles_fenster();
+    h.run();
+
+    // Library: the second click of the double click lands on the first row of the folder just
+    // opened (a_bluse.sm2d). It must open that folder and nothing else.
+    h.state_mut().letzter_ordner = oben.clone();
+    h.get_by_role_and_label(Role::Button, "Zuletzt").click();
+    h.run();
+    let p = h
+        .get_by_role_and_label(Role::Button, &ordnerzeile("muster"))
+        .rect()
+        .center();
+    let meldung = h.state().meldung.clone();
+    doppelklick_bei(&mut h, p);
+    h.run();
+    assert_eq!(
+        h.state().bibliothek.liste.ordner,
+        std::path::absolute(&unten).unwrap(),
+        "Ordner geöffnet"
+    );
+    assert!(h.state().muster.is_none(), "nichts geladen");
+    assert_eq!(h.state().bibliothek.liste.markiert, None, "nichts markiert");
+    assert_eq!(h.state().meldung, meldung);
+
+    // With a pattern shown, a double click on a folder whose first row is another measurement
+    // file leaves the pattern's measurement file alone.
+    let andere = oben.join("andere");
+    std::fs::create_dir_all(&andere).unwrap();
+    std::fs::copy(
+        muster_ordner().join("measurements.smis"),
+        andere.join("andere.smis"),
+    )
+    .unwrap();
+    assert!(h.state_mut().muster_laden(unten.join("a_bluse.sm2d")));
+    h.get_by_role_and_label(Role::Button, "Hoch").click();
+    h.run();
+    let p = h
+        .get_by_role_and_label(Role::Button, &ordnerzeile("andere"))
+        .rect()
+        .center();
+    doppelklick_bei(&mut h, p);
+    h.run();
+    assert!(h.state().bibliothek.liste.ordner.ends_with("andere"));
+    let m = h.state().muster.as_ref().unwrap();
+    assert!(
+        !m.massdatei_von_hand && m.massdatei.ends_with("measurements.smis"),
+        "Maßdatei ersetzt: {}",
+        m.massdatei.display()
+    );
+    assert_eq!(h.state().bibliothek.liste.markiert, None);
+
+    // The file dialog: the double click opens the folder and the dialog stays open.
+    h.state_mut().muster = None;
+    h.state_mut().auftrag = None;
+    h.state_mut().letzter_ordner = oben.clone();
+    h.get_by_role_and_label(Role::Button, "Öffnen").click();
+    h.run();
+    let p = h
+        .query_all_by_role_and_label(Role::Button, &ordnerzeile("muster"))
+        .max_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .expect("Ordnerzeile im Dialog")
+        .rect()
+        .center();
+    doppelklick_bei(&mut h, p);
+    h.run();
+    let d = h.state().dateiwahl.as_ref().expect("Dialog offen");
+    assert_eq!(d.liste.ordner, std::path::absolute(&unten).unwrap());
+    assert_eq!(d.liste.markiert, None);
+    assert!(h.state().muster.is_none(), "im Dialog nichts gewählt");
+
+    // A double click on a file still acts on it.
+    let p = h
+        .query_all_by_role_and_label(Role::Button, "a_bluse.sm2d")
+        .max_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .unwrap()
+        .rect()
+        .center();
+    doppelklick_bei(&mut h, p);
+    assert!(h.state().dateiwahl.is_none());
+    assert_eq!(gezeigt(&h).as_deref(), Some("a_bluse.sm2d"));
+    let _ = std::fs::remove_dir_all(&oben);
+}
+
+/// The texts painted into the 2D view in the last frame for which `ist` says so, with their rects
+/// (the piece list and the properties show the same names; they are not counted).
+fn gemalte_texte(h: &Harness<'_, App>, ist: &dyn Fn(&str) -> bool) -> Vec<(String, egui::Rect)> {
+    fn sammeln(s: &egui::Shape, ist: &dyn Fn(&str) -> bool, out: &mut Vec<(String, egui::Rect)>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| sammeln(s, ist, out)),
+            egui::Shape::Text(t) if ist(t.galley.text()) => {
+                out.push((
+                    t.galley.text().to_string(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                ));
+            }
+            _ => {}
+        }
+    }
+    let ansicht = h.get_by_label("2D-Ansicht").rect();
+    let mut out = Vec::new();
+    for c in &h.output().shapes {
+        sammeln(&c.shape, ist, &mut out);
+    }
+    out.retain(|(_, r)| ansicht.intersects(*r));
+    out
+}
+
+/// A window of the default size `main.rs` opens (1400 × 900).
+fn standardfenster(speicher: Option<&Speicher>) -> Harness<'_, App> {
+    Harness::builder()
+        .with_size([1400.0, 900.0])
+        .build_eframe(|cc| {
+            if let Some(s) = speicher {
+                cc.storage = Some(s);
+            }
+            App::neu(cc)
+        })
+}
+
+#[test]
+fn teilnamen_und_laengen_ueberdecken_sich_nicht() {
+    // The 2D window wide (3D window hidden), lengths on, nothing selected: names fit into some
+    // pieces, and edge midpoints lie under some of them.
+    let mut speicher = Speicher::default();
+    speicher.0.insert(
+        SCHLUESSEL_ANORDNUNG.into(),
+        "fenster3d=0;fenster2d=1".into(),
+    );
+    speicher.0.insert(
+        SCHLUESSEL_ANZEIGE2D.into(),
+        "naehte=1;laengen=1;teilnamen=1;massstab=1".into(),
+    );
+    let mut h = standardfenster(Some(&speicher));
+    assert!(h.state_mut().muster_laden(bluse()));
+    h.run();
+    let kurz: Vec<String> = h
+        .state()
+        .muster
+        .as_ref()
+        .unwrap()
+        .teile
+        .iter()
+        .map(|t| t.kurz.clone())
+        .collect();
+    let namen = gemalte_texte(&h, &|t| kurz.iter().any(|k| k == t));
+    let laengen = gemalte_texte(&h, &|t| {
+        t.split_once(',').is_some_and(|(a, b)| {
+            !a.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) && b.len() == 1
+        })
+    });
+    assert!(!namen.is_empty(), "kein Teilname gemalt");
+    assert!(laengen.len() > 20, "nur {} Längen", laengen.len());
+    for (n, rn) in &namen {
+        for (l, rl) in &laengen {
+            assert!(
+                !rn.intersects(*rl),
+                "Teilname {n} {rn:?} über Länge {l} {rl:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nahtliste_passt_in_den_objekt_browser() {
+    // At the default size every column of the seam grid lies inside the object browser, and at
+    // the minimum size Δ still does (the Bezeichnung may be cut there; its hover has it all).
+    let soll = soll_bluse();
+    for (groesse, ganz) in [([1400.0, 900.0], true), ([800.0, 500.0], false)] {
+        let mut h = Harness::builder()
+            .with_size(groesse)
+            .build_eframe(|cc| App::neu(cc));
+        assert!(h.state_mut().muster_laden(bluse()));
+        h.run();
+        menue_waehlen(&mut h, &["2D-Schnitt", "Nähen"], "Nahtlängen prüfen");
+        let browser = flaeche(&h, "Objekt-Browser").unwrap();
+        let kopf = h.get_by_role_and_label(Role::Label, "Δ").rect();
+        assert!(
+            browser.x_range().contains(kopf.left()) && kopf.right() <= browser.right(),
+            "{groesse:?}: Δ-Kopf {kopf:?} außerhalb {browser:?}"
+        );
+        for (kennung, _, _, d) in &soll.naehte {
+            let k = h.get_by_role_and_label(Role::Button, kennung);
+            let a = k.accesskit_node();
+            let eltern = a.parent().unwrap();
+            let kinder: Vec<_> = eltern.children().collect();
+            let i = kinder.iter().position(|c| c.id() == a.id()).unwrap();
+            let zelle = |j: usize| {
+                let n = &kinder[i + j];
+                (
+                    n.value().or_else(|| n.label()).unwrap_or_default(),
+                    h.get_by(|m| m.id() == n.id()).rect(),
+                )
+            };
+            let (text, delta) = zelle(1);
+            assert_eq!(
+                text,
+                delta_wie_cli(*d),
+                "{kennung}: Δ in der zweiten Spalte"
+            );
+            assert!(
+                delta.right() <= browser.right() && delta.left() >= browser.left(),
+                "{groesse:?}: Δ von {kennung} {delta:?} außerhalb {browser:?}"
+            );
+            if ganz {
+                let (_, letzte) = zelle(4);
+                assert!(
+                    letzte.right() <= browser.right(),
+                    "{groesse:?}: Zeile {kennung} reicht bis {}, Browser bis {}",
+                    letzte.right(),
+                    browser.right()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn teilnamen_in_der_vorgabe_anordnung() {
+    // At the default size with 3D and 2D side by side no blouse name fits into its piece. The
+    // toggle must still show something: the selected piece's name, and the name of the piece
+    // under the pointer.
+    let mut h = standardfenster(None);
+    h.ctx
+        .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+    assert!(h.state_mut().muster_laden(bluse()));
+    h.run();
+    let kurz: Vec<String> = h
+        .state()
+        .muster
+        .as_ref()
+        .unwrap()
+        .teile
+        .iter()
+        .map(|t| t.kurz.clone())
+        .collect();
+    let namen = |h: &Harness<'_, App>| -> Vec<String> {
+        gemalte_texte(h, &|t| kurz.iter().any(|k| k == t))
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect()
+    };
+    assert!(h.state().ansicht.anzeige.teilnamen);
+    // The name of the selected piece, painted inside the 2D view.
+    h.get_by_role_and_label(Role::Button, "Rueckenteil Mitte Links")
+        .click();
+    h.run();
+    let ansicht = h.get_by_label("2D-Ansicht").rect();
+    let gemalt = gemalte_texte(&h, &|t| t == "Rueckenteil Mitte Links");
+    assert_eq!(gemalt.len(), 1, "Name des gewählten Teils: {:?}", namen(&h));
+    assert!(
+        ansicht.contains_rect(gemalt[0].1),
+        "{gemalt:?} in {ansicht:?}"
+    );
+    // With lengths on as well, no length covers it.
+    h.key_press_modifiers(Modifiers::SHIFT, Key::Z);
+    h.run();
+    let laengen = gemalte_texte(&h, &|t| t.contains(',') && t.len() <= 6);
+    assert!(!laengen.is_empty());
+    let name = gemalte_texte(&h, &|t| t == "Rueckenteil Mitte Links")[0].1;
+    assert!(
+        laengen.iter().all(|(_, r)| !r.intersects(name)),
+        "{laengen:?}"
+    );
+
+    // The piece under the pointer names itself.
+    let punkt = {
+        let app = h.state();
+        let t = app
+            .muster
+            .as_ref()
+            .unwrap()
+            .teile
+            .iter()
+            .find(|t| t.kurz == "Band Mitte")
+            .unwrap();
+        let v = t.versatz(app.ansicht.ausgelegt);
+        let (x, y) = app.ansicht.sicht.unwrap().zu_bild(klon3d_pattern::Pt::new(
+            t.etikett.x + v.x,
+            t.etikett.y + v.y,
+        ));
+        ansicht.min + egui::vec2(x as f32, y as f32)
+    };
+    h.hover_at(punkt);
+    h.run();
+    assert!(hinweis_da(&h, "Band Mitte"), "kein Hinweis über Band Mitte");
+
+    // Teilnamen off: no name anywhere, no hover text.
+    h.get_by_role_and_label(Role::Button, "Teilnamen").click();
+    h.run();
+    h.hover_at(punkt);
+    h.run();
+    assert!(namen(&h).is_empty(), "{:?}", namen(&h));
+    assert!(!hinweis_da(&h, "Band Mitte"));
+}
+
+#[test]
+fn hilfefenster_lassen_menue_und_werkzeugleiste_frei() {
+    let mut h = standardfenster(None);
+    h.run();
+    let leiste = h.get_by_role_and_label(Role::Button, "Hell/Dunkel").rect();
+    for (eintrag, titel) in [
+        ("Tastenkürzel", "Tastenkürzel"),
+        ("Über klon3d", "Über klon3d"),
+    ] {
+        menue_waehlen(&mut h, &["Hilfe"], eintrag);
+        let w = h.get_by_role_and_label(Role::Window, titel).rect();
+        assert!(
+            w.top() > leiste.bottom(),
+            "{titel}: {w:?} über der Werkzeugleiste {leiste:?}"
+        );
+        // Centred in the window.
+        let mitte = egui::pos2(700.0, 450.0);
+        assert!(
+            (w.center() - mitte).length() < 2.0,
+            "{titel}: Mitte {:?}",
+            w.center()
+        );
+        h.get_by_label("Hilfe schließen").click();
+        h.run();
+        assert!(h.state().hilfe.is_none());
+    }
 }

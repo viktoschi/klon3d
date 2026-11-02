@@ -3,8 +3,8 @@
 //! * Object browser (right, top), with the tabs
 //!   * **Teile:** search field, the measurement file in use, piece list (short name,
 //!     circumference, nodes);
-//!   * **Nähte:** the same search, seam list (Kennung, Bezeichnung, L_A, L_B, Δ in cm with four
-//!     decimals as `klon3d naehte` prints them), below it the doubly used edges, the pieces whose
+//!   * **Nähte:** the same search, seam list (Kennung, Δ, L_A, L_B in cm with four decimals as
+//!     `klon3d naehte` prints them, Bezeichnung), below it the doubly used edges, the pieces whose
 //!     boundary cannot be resolved and further hints;
 //!   * **Stoffe:** the fabric files (`.zfab`) of the fabrics folder, names only.
 //! * Properties (right, below): the selected piece with its boundary edges, or – when a seam row
@@ -22,8 +22,10 @@ use klon3d_pattern::naehte::{Nahtergebnis, Nahtseite, TOLERANZ_CM};
 use crate::app::{Aktion, App};
 use crate::muster::{cm4, delta4, naht_auffaellig, naht_vermerk, Muster, Nahtstand, Teil};
 
-/// Longest Bezeichnung shown in the seam list; the full text is in the hover text.
-const BEZEICHNUNG_MAX: usize = 26;
+/// Longest Bezeichnung shown in the seam list; the full text is in the hover text and in the
+/// properties. Short enough that the whole grid fits into the object browser at the default
+/// window size (1400 wide).
+const BEZEICHNUNG_MAX: usize = 20;
 
 /// The tabs of the object browser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,7 +206,9 @@ fn nahtliste(app: &mut App, m: &Muster, ui: &mut egui::Ui) {
         .num_columns(5)
         .striped(true)
         .show(ui, |ui| {
-            for kopf in ["Naht", "Bezeichnung", "L_A", "L_B", "Δ"] {
+            // Δ next to the Kennung: it is what the list is for, and in a narrow panel the
+            // columns at the right are the ones that scroll out of sight.
+            for kopf in ["Naht", "Δ", "L_A", "L_B", "Bezeichnung"] {
                 ui.strong(kopf);
             }
             ui.end_row();
@@ -224,16 +228,16 @@ fn nahtliste(app: &mut App, m: &Muster, ui: &mut egui::Ui) {
                 if r.clicked() {
                     app.aktion(Aktion::NahtWaehlen(ni));
                 }
-                ui.label(gekuerzt(&n.name, BEZEICHNUNG_MAX))
-                    .on_hover_text(&n.name);
-                ui.label(cm4(n.a.laenge_cm));
-                ui.label(cm4(n.b.laenge_cm));
                 let d = delta4(n.diff_cm);
                 if auff {
                     ui.colored_label(warn, d).on_hover_text(naht_vermerk(n));
                 } else {
                     ui.label(d);
                 }
+                ui.label(cm4(n.a.laenge_cm));
+                ui.label(cm4(n.b.laenge_cm));
+                ui.label(gekuerzt(&n.name, BEZEICHNUNG_MAX))
+                    .on_hover_text(&n.name);
                 ui.end_row();
             }
         });

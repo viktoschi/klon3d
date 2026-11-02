@@ -4,11 +4,11 @@
 //! No `rfd`: on Linux it pulls in GTK or a D-Bus portal stack, and a native dialog cannot be driven
 //! by the headless UI tests. [`Verzeichnis`] is one folder with its subfolders and the files that
 //! match a list of extensions, its drive buttons and its rows (single click: open a folder or mark
-//! a file, double click on a file: act). [`Dateiwahl`] puts it into a window with a filter switch
-//! and a path field that takes any path – absolute or relative to the current folder, on Windows
-//! also a bare drive letter (`D:`); the library shows the same core docked at the left. The
-//! listing and the path handling are plain functions with unit tests; the `ui` functions only show
-//! them.
+//! a file, double click on a file: act – only on the file the first click marked).
+//! [`Dateiwahl`] puts it into a window with a filter switch and a path field that takes any path
+//! – absolute or relative to the current folder, on Windows also a bare drive letter (`D:`); the
+//! library shows the same core docked at the left. The listing and the path handling are plain
+//! functions with unit tests; the `ui` functions only show them.
 //!
 //! Nothing here touches the disk per frame: the folder is read when it changes, the drive list
 //! once per listing (on Windows from `GetLogicalDrives`, without opening a drive – a disconnected
@@ -328,6 +328,11 @@ impl Verzeichnis {
     /// act on it; the caller decides. Files for which `gesperrt` says so are shown disabled with
     /// the hover text `warum`. Every row has the same height, so only the visible ones are laid out
     /// – a folder with tens of thousands of files stays quick.
+    ///
+    /// A double click acts only on the file its first click marked. egui counts a double click
+    /// for whatever widget gets the second click: after the first click of a double click on a
+    /// folder has opened it, the second one lands on the row that now lies under the pointer –
+    /// it must neither act on that row nor open a further folder.
     pub fn zeilen(
         &mut self,
         ui: &mut egui::Ui,
@@ -337,6 +342,8 @@ impl Verzeichnis {
     ) -> Option<Zeilenklick> {
         let zeile = zeilenhoehe(ui);
         let mut klick = None;
+        // Marked before this frame: by the first click of a double click on the same file.
+        let vorher = self.markiert.clone();
         egui::ScrollArea::vertical()
             .max_height(max_hoehe)
             .auto_shrink([false, false])
@@ -356,11 +363,18 @@ impl Verzeichnis {
                                 .min_size(egui::vec2(0.0, zeile)),
                         )
                         .on_disabled_hover_text(warum);
-                    if e.ordner && r.clicked() {
-                        klick = Some(Zeilenklick::Ordner(e.pfad.clone()));
-                    } else if !e.ordner && r.double_clicked() {
-                        klick = Some(Zeilenklick::Doppelt(e.pfad.clone()));
-                    } else if !e.ordner && r.clicked() {
+                    // Only the first click of a run opens a folder; the further ones of a
+                    // double or triple click belong to the row the first one hit.
+                    let weiterer = r.double_clicked() || r.triple_clicked();
+                    if e.ordner {
+                        if r.clicked() && !weiterer {
+                            klick = Some(Zeilenklick::Ordner(e.pfad.clone()));
+                        }
+                    } else if weiterer {
+                        if r.double_clicked() && vorher.as_ref() == Some(&e.pfad) {
+                            klick = Some(Zeilenklick::Doppelt(e.pfad.clone()));
+                        }
+                    } else if r.clicked() {
                         klick = Some(Zeilenklick::Markiert(e.pfad.clone()));
                     }
                 }

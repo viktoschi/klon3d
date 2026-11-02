@@ -65,10 +65,11 @@ fn nahtliste_zeigt_jede_naht_wie_klon3d_naehte() {
     h.run();
     assert_eq!(soll.naehte.len(), 24);
     for (kennung, la, lb, d) in &soll.naehte {
+        // Kennung | Δ | L_A | L_B | Bezeichnung
         let z = zeile(&h, kennung, 4);
+        assert_eq!(z[0], delta_wie_cli(*d), "Δ von {kennung}");
         assert_eq!(z[1], format!("{la:.4}"), "L_A von {kennung}");
         assert_eq!(z[2], format!("{lb:.4}"), "L_B von {kennung}");
-        assert_eq!(z[3], delta_wie_cli(*d), "Δ von {kennung}");
     }
     // The list uses no edge twice; the status bar names the largest deviation like the CLI.
     assert!(h.query_by_label("keine Kante in zwei Nähten").is_some());
@@ -147,9 +148,23 @@ fn design_umschalten_und_behalten() {
     assert_eq!(h.state().thema, Theme::Dark, "dunkel ist die Vorgabe");
     assert!(h.ctx.global_style().visuals.dark_mode);
 
+    // The hover text names the design the button switches to.
+    h.ctx
+        .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+    let hinweis = |h: &mut Harness<'_, App>, text: &str| {
+        h.get_by_label("Hell/Dunkel").hover();
+        h.run();
+        assert!(
+            h.query_all_by_role(Role::Tooltip)
+                .any(|t| t.query_by_label(text).is_some()),
+            "Hinweis „{text}“ fehlt"
+        );
+    };
+    hinweis(&mut h, "zum hellen Design wechseln");
     h.get_by_label("Hell/Dunkel").click();
     h.run();
     assert_eq!(h.state().thema, Theme::Light);
+    hinweis(&mut h, "zum dunklen Design wechseln");
     assert_eq!(h.ctx.theme(), Theme::Light);
     assert!(!h.ctx.global_style().visuals.dark_mode);
 

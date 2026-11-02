@@ -198,9 +198,11 @@ impl Ladeauftrag {
     }
 
     /// The same request with absolute paths, so that it (and the folder remembered from it) still
-    /// means the same files when the working folder changes.
+    /// means the same files when the working folder changes. `.` and `..` are removed by the same
+    /// rule as in the library ([`crate::dateiwahl::bereinigt`]): `std::path::absolute` keeps `..`
+    /// on Unix, and one file reached two ways would be two entries of the recently opened ones.
     pub fn absolut(self) -> Self {
-        let abs = |p: PathBuf| std::path::absolute(&p).unwrap_or(p);
+        let abs = |p: PathBuf| crate::dateiwahl::bereinigt(&std::path::absolute(&p).unwrap_or(p));
         Ladeauftrag {
             muster: abs(self.muster),
             massdatei: self.massdatei.map(abs),

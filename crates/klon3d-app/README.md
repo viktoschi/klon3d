@@ -9,6 +9,13 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
+**2026-11-02 – review of step 7b done:** reviewers found 11 defects in the new arrangement (two
+of them the same: the Δ column); all are fixed in one commit, each observable one with a test that
+fails on the code before (checked by running the new tests against the old files):
+**41 unit tests + 35 UI tests** (18 in `tests/oberflaeche.rs`, 17 in `tests/fensteranordnung.rs`),
+no compiler warnings, Windows cross check clean, the crate's files rustfmt-clean. List under
+"Review findings (step 7b)" below.
+
 **2026-11-02 – step 7b done:** the window is arranged the way CLO users know it, in three commits
 (each builds, keeps `cargo +1.99 test --locked -p klon3d-app` green and passes the Windows cross
 check): **39 unit tests + 29 UI tests** (18 in `tests/oberflaeche.rs`, 11 in
@@ -35,7 +42,8 @@ check): **39 unit tests + 29 UI tests** (18 in `tests/oberflaeche.rs`, 11 in
   keeps its 300 px. The middle is filled with the panel colour (unfilled, the light theme showed
   black toolbar rows – seen on the screenshot).
 * **Library:** `dateiwahl.rs` has the shared core `Verzeichnis` (listing, drive buttons, rows with
-  single click = mark / open folder, double click = act); the modal `Dateiwahl` and the docked
+  single click = mark / open folder, double click = act – on the file the first click marked
+  only; a double click on a folder opens just that folder); the modal `Dateiwahl` and the docked
   `Bibliothek` both use it. Places Muster / Stoffe / Zuletzt (drives on Windows), path, Hoch; `.sm2d`
   opens, `.smis`/`.naehte` apply to the pattern shown or waiting (same path as a dropped file),
   `.zfab`/`.zprj` greyed. Fabrics folder = `assets/stoffe` searched upwards from the program's and
@@ -43,10 +51,14 @@ check): **39 unit tests + 29 UI tests** (18 in `tests/oberflaeche.rs`, 11 in
 * **Properties of a seam** (row clicked last): Kennung, Bezeichnung, `L_A cm`, `L_B cm`, `Δ cm`,
   both sides with their pieces (short names), points and edges, notch pairs with Δ, notches
   without partner. **2D toggles** Nähte, Längen (edge length in cm at the edge's middle on a
-  backdrop, of the selected piece or of all; labels shorter than their edge or covering another
-  label are left out), Teilnamen, Maßstab.
+  backdrop, of the selected piece or of all; labels longer than their edge or covering a piece
+  name or another label are left out), Teilnamen (where the name fits into the piece; the
+  selected piece's name always – above the piece on a backdrop where it does not fit – and the
+  piece under the pointer as hover text), Maßstab.
 * **Persistence** (`anordnung.rs`): arrangement (visibility, both shares), 2D toggles and recent
   files as forgiving `name=wert` texts in eframe's storage; missing or damaged keys = defaults.
+  Whether a recent file still exists is checked on a background thread when the Datei menu opens
+  (`anordnung::ZuletztPruefung`); the menu never touches the disk.
   Anzeige › Anordnung zurücksetzen also drops egui's stored panel sizes.
 * **Screenshots** (checked by eye, not in the repository): dark, light, and Längen with a piece
   selected, under Xvfb at 1600×1000 with the default window 1400×900 – nothing clipped or
@@ -96,8 +108,8 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   Aufgabe"; entries that need a pattern disabled without one.
 * `src/panele.rs` – search field, measurement file in use ("Maße: …"), piece list, seam list,
   properties panel, status bar (message cut with "…", full text on hover, a click shows an error
-  again). Side panels are capped at 36 % / 24 % of the window (`app::SEITE_ANTEIL`) and scroll in
-  both directions.
+  again). Side panels are capped at a share of the window and scroll in both directions (step 7:
+  36 % / 24 %; since step 7b `fenster::SEITE_ANTEIL`, 17 % / 27 %).
 * `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500;
   a Windows release build is a GUI program (no console window), its messages also go to a message
   box.
@@ -143,7 +155,9 @@ Severity in brackets. Tick when fixed and committed; "won't fix" needs a reason 
 - [x] 4 [low] circumference of a piece whose boundary cannot be resolved was shown unmarked:
       `umfang_cm: Option<f64>`, "–" in the error colour with the reason on hover
 - [x] 8 [medium] at 800×500 the 2D view shrank to ~20 px: panels capped (`SEITE_ANTEIL`), lists
-      scroll in both directions; left panel default 460 so the seam grid fits at 1400 px
+      scroll in both directions; left panel default 460 so the seam grid fits at 1400 px (step 7b
+      moved the seam grid into the object browser at the right; there Δ follows the Kennung and
+      the grid fits at 1400 px – review 7b, no. 2)
 - [x] 9 [medium] dark mode: selection outline hidden under seam strokes: 6 px band after the
       fills and before the seams, lighter selected fill (unit test: contrast ≥ 1.8 against the
       normal fill; the band itself checked by eye under Xvfb, no test)
@@ -195,6 +209,52 @@ the Windows CI job (finding 16) is the first place that runs it.
 - [x] 24 [low] `etikett_liegt_im_bogen` asserts the label lies in the U (by coordinates and by
       `ansicht2d::innen`); the all-patterns unit test also checks every piece's label
 
+### Review findings (step 7b)
+
+All fixed (2026-11-02); "test" names the test that fails on the code before the fix.
+
+- [x] 1 [high] a double click on a folder row acted on the file that then lay under the pointer
+      (library: loaded a pattern or replaced the measurement file / seam list of the pattern
+      shown; dialog: chose the file): egui counts the second click of a double click for
+      whatever row gets it. `Verzeichnis::zeilen` opens a folder only on the first click of a
+      run and acts on a double click only for the file that was marked before the frame. Test
+      `doppelklick_auf_einen_ordner_oeffnet_nur_ihn` (library, pattern shown, dialog)
+- [x] 2, 8 [medium] Δ column of the seam list cut off at 1400 × 900 (right panel 378 px, grid
+      ~420 px): columns now Naht | Δ | L_A | L_B | Bezeichnung, Bezeichnung cut at 20 characters
+      (full text on hover and in the properties). Test `nahtliste_passt_in_den_objekt_browser`:
+      every cell of every row inside the object browser at 1400 × 900, Δ also at 800 × 500
+- [x] 3 [low] piece names painted over edge-length labels: names are placed first and seed the
+      collision list of the lengths; a length that would cover a name is left out, a name that
+      would cover another name too. Test `teilnamen_und_laengen_ueberdecken_sich_nicht` (2D
+      window wide, lengths on: no length rect meets a name rect)
+- [x] 4 [low] Teilnamen showed nothing in the default arrangement (no blouse name fits into
+      its piece there): the selected piece's name is always shown (above the piece on a
+      backdrop where it does not fit, kept inside the view), the piece under the pointer names
+      itself as hover text, the button's hover text says so. Test
+      `teilnamen_in_der_vorgabe_anordnung` (1400 × 900)
+- [x] 5 [low] help windows (Tastenkürzel, Über klon3d) opened at the top left over the menu bar
+      and the file toolbar: anchored in the centre like the other dialogs. Test
+      `hilfefenster_lassen_menue_und_werkzeugleiste_frei`
+- [x] 6 [low] hover text "zum helles Design wechseln": now "zum hellen / dunklen Design
+      wechseln"; asserted in `design_umschalten_und_behalten`
+- [x] 7 [low] Datei › Zuletzt geöffnet ran `is_file()` on every entry in every frame (a
+      disconnected network drive would freeze the window): `anordnung::ZuletztPruefung` checks
+      on a background thread, started once per opening of the Datei menu (at most one at a time,
+      results as they come); unknown = enabled, a failed open starts a new check. Unit test
+      `zuletzt_im_hintergrund_pruefen`; `zuletzt_geoeffnet_im_menue` asserts one check per
+      opening over 30 frames with the pointer moving. Not run on Windows with a real network drive
+- [x] 9 [low] a stored hidden 2D window stayed the active one at start: `App::mit_speicher` ends
+      with `aktiv_pruefen()`; asserted in `alter_gespeicherter_stand_startet_mit_vorgaben`
+- [x] 10 [low] one pattern twice in the recent files when reached through `..` (Unix keeps `..`
+      in `std::path::absolute`): `Ladeauftrag::absolut` cleans the paths with
+      `dateiwahl::bereinigt` like the library; `zuletzt_vorne`/`zuletzt_aus_text` compare clean
+      paths (also lists stored by the version before). Test `zuletzt_ohne_doppel_ueber_punktpunkt`
+      and unit test `zuletzt_neueste_vorne_ohne_doppel`
+- [x] 11 [low] the old-state test wrote the storage through the current key constants and never
+      checked the stored folder: it writes the literal keys of the previous version
+      (`klon3d.thema`, `klon3d.ordner`) and asserts the theme, `letzter_ordner` and the library's
+      start folder (a renamed key or a dropped folder read now fails it)
+
 Notes: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
 `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is deprecated in 0.37
 (`Id::unique`); panels are `egui::Panel::{top,bottom,left,right}(..).show(ui, ..)`. kittest's
@@ -207,7 +267,12 @@ the menu (egui), nothing else.
 Notes from step 7b: kittest feeds **one event per step** and a step is 0.25 s – the two clicks
 of a double click then lie 0.5 s apart, too slow for egui (0.3 s); the library test builds its
 window `with_step_dt(1/30)` (`schnelles_fenster`). A click shortly before a double click turns it
-into a triple click (`double_clicked()` is false). Menu-bar buttons, toolbar buttons and submenus
+into a triple click (`double_clicked()` is false). egui's `double_clicked()` is true for whichever
+widget receives the second click – also when the first one hit another widget (review 7b no. 1).
+`Harness::run` stops at a delayed repaint (`request_repaint_after`); to wait for a background
+thread, step and sleep in a loop (`pruefung_abwarten`). Texts painted into the 2D view are found in
+`h.output().shapes`; the piece list and the properties paint the same names, so filter by the
+view's rect (`gemalte_texte`). Menu-bar buttons, toolbar buttons and submenus
 share names ("Avatar", "2D-Schnitt", "Zurücksetzen"): the helpers `in_der_leiste` and `im_menue`
 pick by "inside a menu" (AccessKit role menu among the ancestors – the menu bar is one too) and by
 position. Areas are found as AccessKit panes by name (`fenster::flaeche`), tabs by role tab. A
@@ -252,7 +317,7 @@ exist but are disabled.
 | `src/dateiwahl.rs` | folder listing `Verzeichnis` (shared with the library) and the modal file dialog |
 | `tests/gemeinsam/mod.rs` | helpers of the UI tests: windows, independent Bluse3 evaluation, grid rows, menus, storage |
 | `tests/oberflaeche.rs` | kittest: pieces and seams against `pruefe_naehte`, selection, theme, menus and their disabled entries, shortcuts, file dialog, drag and drop, measurement file choice, minimum size, all test patterns |
-| `tests/fensteranordnung.rs` | kittest: toolbars, Fenster toggles, Strg+Tab, Umschalt+S/Z, edge lengths, recent files, library, fabrics, Informationen, seam properties, old stored state, reset |
+| `tests/fensteranordnung.rs` | kittest: toolbars, Fenster toggles, Strg+Tab, Umschalt+S/Z, edge lengths, recent files, library, fabrics, Informationen, seam properties, old stored state, reset; (review 7b) double click on a folder, names vs lengths, names in the default arrangement, seam grid inside the object browser, help windows centred, recent files through `..` |
 | `examples/bildschirmfoto.rs` | (planned, not written) renders the window with kittest's wgpu renderer to PNG; skips without an adapter |
 
 Menu bar (step 7b; `[s]` = disabled, a later task): **Datei** (Neu Strg+N [s], Öffnen… Strg+O,

@@ -1,13 +1,18 @@
 //! What the window remembers between runs, as plain data with unit tests: which panels, windows
 //! and toolbars are shown, where the divider between the 3D and the 2D window sits, the display
-//! toggles of the 2D view and the recently opened patterns. Also the search for the fabrics folder.
+//! toggles of the 2D view and the recently opened patterns (whether those still exist is checked
+//! in the background, [`ZuletztPruefung`]). Also the search for the fabrics folder.
 //!
 //! Everything is stored through eframe's storage as short texts (`name=wert;…` and one path per
 //! line). Reading is forgiving: a missing key, an unknown name or a value that does not parse
 //! falls back to the default, so a stored state of an older version – or a damaged one – never
 //! stops the start.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+
+use crate::dateiwahl::bereinigt;
 
 /// Storage key of the window arrangement ([`Anordnung::als_text`]).
 pub const SCHLUESSEL_ANORDNUNG: &str = "klon3d.anordnung";
@@ -250,10 +255,12 @@ fn schalter(wert: &str) -> Option<bool> {
 // ───────────────────────────────────────────────────────── recently opened
 
 /// Put `pfad` at the front of the recently opened patterns; an equal entry further back is
-/// removed, and the list keeps at most [`ZULETZT_MAX`] entries.
+/// removed, and the list keeps at most [`ZULETZT_MAX`] entries. Paths are compared without `.`
+/// and `..` ([`bereinigt`]).
 pub fn zuletzt_vorne(liste: &mut Vec<PathBuf>, pfad: &Path) {
-    liste.retain(|p| p != pfad);
-    liste.insert(0, pfad.to_path_buf());
+    let pfad = bereinigt(pfad);
+    liste.retain(|p| *p != pfad);
+    liste.insert(0, pfad);
     liste.truncate(ZULETZT_MAX);
 }
 
@@ -266,12 +273,13 @@ pub fn zuletzt_als_text(liste: &[PathBuf]) -> String {
         .join("\n")
 }
 
-/// The list from [`zuletzt_als_text`]: empty lines and repeats dropped, at most
-/// [`ZULETZT_MAX`]. Files that no longer exist stay – the menu shows them disabled.
+/// The list from [`zuletzt_als_text`]: empty lines and repeats dropped (also the same file
+/// reached through `..`, as an earlier version stored it), at most [`ZULETZT_MAX`]. Files that no
+/// longer exist stay – the menu shows them disabled.
 pub fn zuletzt_aus_text(text: &str) -> Vec<PathBuf> {
     let mut liste: Vec<PathBuf> = Vec::new();
     for zeile in text.lines().map(str::trim).filter(|z| !z.is_empty()) {
-        let p = PathBuf::from(zeile);
+        let p = bereinigt(Path::new(zeile));
         if !liste.contains(&p) {
             liste.push(p);
         }
@@ -295,6 +303,94 @@ pub fn zuletzt_beschriftungen(liste: &[PathBuf]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// Which of the recently opened patterns still exist, checked on a background thread.
+///
+/// Looking at a file can block: a path on a disconnected network drive waits for the network
+/// timeout. The menu therefore never touches the disk itself; it shows what the last check found,
+/// and a file not checked yet counts as there (opening it reports a missing file). A check is
+/// started when the Datei menu opens, at most one runs at a time, and it reports every file as
+/// soon as it has looked at it.
+#[derive(Debug, Default)]
+pub struct ZuletztPruefung {
+    bekannt: HashMap<PathBuf, bool>,
+    laeuft: Option<mpsc::Receiver<(PathBuf, bool)>>,
+    /// Asked for another check while one was running.
+    nochmal: bool,
+    /// How many checks were started so far.
+    pub gestartet: usize,
+}
+
+impl ZuletztPruefung {
+    /// Check the files of `liste` in the background. While a check runs, another one follows it
+    /// (see [`ZuletztPruefung::abholen`]).
+    pub fn starten(&mut self, liste: &[PathBuf]) {
+        if self.laeuft.is_some() {
+            self.nochmal = true;
+            return;
+        }
+        // Only what the list holds is kept: the map stays as small as the list.
+        self.bekannt.retain(|p, _| liste.contains(p));
+        if liste.is_empty() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let liste = liste.to_vec();
+        let faden = std::thread::Builder::new()
+            .name("klon3d-zuletzt".into())
+            .spawn(move || {
+                for p in liste {
+                    let da = p.is_file();
+                    if tx.send((p, da)).is_err() {
+                        break;
+                    }
+                }
+            });
+        // Without a thread nothing is checked; the entries stay as they were known.
+        if faden.is_ok() {
+            self.laeuft = Some(rx);
+            self.gestartet += 1;
+        }
+    }
+
+    /// Take over what the running check has found so far, without waiting; returns whether a
+    /// check is still running. If another check was asked for meanwhile, it starts on `liste`
+    /// once this one is done.
+    pub fn abholen(&mut self, liste: &[PathBuf]) -> bool {
+        let Some(rx) = &self.laeuft else {
+            return false;
+        };
+        loop {
+            match rx.try_recv() {
+                Ok((p, da)) => {
+                    self.bekannt.insert(p, da);
+                }
+                Err(mpsc::TryRecvError::Empty) => return true,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+        self.laeuft = None;
+        if std::mem::take(&mut self.nochmal) {
+            self.starten(liste);
+        }
+        self.laeuft.is_some()
+    }
+
+    /// Is a check running?
+    pub fn laeuft(&self) -> bool {
+        self.laeuft.is_some()
+    }
+
+    /// Does `pfad` exist, as far as known? `None`: not checked yet.
+    pub fn da(&self, pfad: &Path) -> Option<bool> {
+        self.bekannt.get(pfad).copied()
+    }
+
+    /// Note what is known without looking (a file just loaded is there).
+    pub fn setzen(&mut self, pfad: &Path, da: bool) {
+        self.bekannt.insert(pfad.to_path_buf(), da);
+    }
 }
 
 // ───────────────────────────────────────────────────────── fabrics folder
@@ -374,6 +470,52 @@ mod tests {
             zuletzt_aus_text("\n/a.sm2d\n\n/a.sm2d\n/b.sm2d"),
             [PathBuf::from("/a.sm2d"), PathBuf::from("/b.sm2d")]
         );
+        // One file reached through `..` is one entry.
+        assert_eq!(
+            zuletzt_aus_text("/x/y/../a.sm2d\n/x/a.sm2d\n/x/./b.sm2d"),
+            [PathBuf::from("/x/a.sm2d"), PathBuf::from("/x/b.sm2d")]
+        );
+        let mut l = vec![PathBuf::from("/x/a.sm2d")];
+        zuletzt_vorne(&mut l, Path::new("/x/y/../a.sm2d"));
+        assert_eq!(l, [PathBuf::from("/x/a.sm2d")]);
+    }
+
+    #[test]
+    fn zuletzt_im_hintergrund_pruefen() {
+        let d = std::env::temp_dir().join(format!("klon3d-app-pruefen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (da, weg) = (d.join("da.sm2d"), d.join("weg.sm2d"));
+        std::fs::write(&da, "x").unwrap();
+        let liste = vec![da.clone(), weg.clone()];
+        let abwarten = |p: &mut ZuletztPruefung| {
+            for _ in 0..500 {
+                if !p.abholen(&liste) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            panic!("Prüfung endet nicht");
+        };
+        let mut p = ZuletztPruefung::default();
+        assert_eq!(p.da(&da), None, "vor der Prüfung unbekannt");
+        p.starten(&liste);
+        assert!(p.laeuft());
+        // Asked again while it runs: no second thread now, one more check after it.
+        p.starten(&liste);
+        assert_eq!(p.gestartet, 1);
+        abwarten(&mut p);
+        assert_eq!(p.gestartet, 2);
+        assert_eq!((p.da(&da), p.da(&weg)), (Some(true), Some(false)));
+        // A file deleted meanwhile is found by the next check.
+        std::fs::remove_file(&da).unwrap();
+        p.starten(&liste);
+        abwarten(&mut p);
+        assert_eq!(p.da(&da), Some(false));
+        // An empty list starts nothing and forgets what it knew.
+        p.starten(&[]);
+        assert!(!p.laeuft() && p.gestartet == 3 && p.da(&weg).is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

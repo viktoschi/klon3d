@@ -23,14 +23,19 @@
 //!
 //! ## Display toggles
 //!
-//! [`Anzeige2d`] switches the seams, the piece names, the scale bar and the edge lengths: with
-//! "Längen" on, every boundary edge of the selected piece – of all pieces when none is selected –
-//! carries its length in cm at its middle ([`halbweg`]), on a backdrop; an edge shorter on screen
-//! than its text gets none, nor does one whose label would cover another, so the labels never
-//! pile up – zooming in shows the rest.
+//! [`Anzeige2d`] switches the seams, the piece names, the scale bar and the edge lengths. With
+//! "Teilnamen" on, a piece shows its name where the name fits into it; the selected piece always
+//! shows its name (above the piece on a backdrop when it does not fit), and the piece under the
+//! pointer names itself in a hover text – so the toggle has a visible effect also when the 2D
+//! window is narrow. With "Längen" on, every boundary edge of the selected piece – of all pieces
+//! when none is selected – carries its length in cm at its middle ([`halbweg`]), on a backdrop; an
+//! edge shorter on screen than its text gets none, nor does one whose label would cover a name or
+//! another length, so the labels never pile up – zooming in shows the rest.
+
+use std::sync::Arc;
 
 use eframe::egui;
-use egui::{Align2, Color32, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
+use egui::{Align2, Color32, FontId, Galley, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use klon3d_pattern::geom::Pt;
 
 use crate::anordnung::Anzeige2d;
@@ -47,6 +52,18 @@ pub const AUSWAHL_BREITE: f32 = 6.0;
 
 /// Longest scale bar in screen points.
 pub const MASSSTAB_MAX_PX: f64 = 160.0;
+
+/// Gap in screen points between the top of the selected piece and its name placed above it:
+/// clear of the selection band and of a length label on a top edge.
+const NAME_ABSTAND: f32 = 10.0;
+
+/// A piece name placed in the view: where, the text, its colour and whether it has a backdrop.
+struct Name {
+    feld: Rect,
+    galley: Arc<Galley>,
+    farbe: Color32,
+    hinterlegt: bool,
+}
 
 // ───────────────────────────────────────────────────────── Sicht
 
@@ -206,6 +223,23 @@ fn zahl_kurz(w: f64) -> String {
     let s = format!("{w:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     s.replace('.', ",")
+}
+
+/// `feld` moved into `flaeche` as far as it fits (a field wider than `flaeche` keeps its left
+/// edge at the left of `flaeche`).
+pub fn in_die_flaeche(feld: Rect, flaeche: Rect) -> Rect {
+    let dx = (flaeche.right() - feld.right()).min(0.0);
+    let dy = (flaeche.bottom() - feld.bottom()).min(0.0);
+    let f = feld.translate(Vec2::new(dx, dy));
+    let dx = (flaeche.left() - f.left()).max(0.0);
+    let dy = (flaeche.top() - f.top()).max(0.0);
+    f.translate(Vec2::new(dx, dy))
+}
+
+/// The backdrop of labels in the view: the view's background, slightly transparent.
+fn hinterlegt(v: &egui::Visuals) -> Color32 {
+    let g = v.extreme_bg_color;
+    Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 210)
 }
 
 // ───────────────────────────────────────────────────────── Ansicht
@@ -382,6 +416,18 @@ impl Ansicht2d {
             }
         }
         self.sicht = Some(sicht);
+        // The piece under the pointer names itself – also where its name does not fit into it.
+        if self.anzeige.teilnamen && !resp.dragged() {
+            if let Some(maus) = resp.hover_pos() {
+                let m = maus - rect.min;
+                let welt = sicht.zu_welt(m.x as f64, m.y as f64);
+                if let Some(t) =
+                    treffer(&muster.teile, welt, self.ausgelegt).map(|i| &muster.teile[i])
+                {
+                    resp.clone().on_hover_text_at_pointer(&t.kurz);
+                }
+            }
+        }
 
         let farben = Farben::aus(ui.visuals());
         let bild = |p: Pt, v: Pt| -> Pos2 {
@@ -460,7 +506,24 @@ impl Ansicht2d {
             }
         }
 
+        // Names before the lengths: a length label that would cover a name is left out.
+        let namen = if self.anzeige.teilnamen {
+            self.namen(
+                &painter,
+                muster,
+                gewaehlt,
+                &bild,
+                &auf_schirm,
+                sicht,
+                rect,
+                &farben,
+            )
+        } else {
+            Vec::new()
+        };
+        let grund = hinterlegt(ui.visuals());
         if self.anzeige.laengen {
+            let belegt: Vec<Rect> = namen.iter().map(|n| n.feld).collect();
             self.laengen(
                 &painter,
                 muster,
@@ -469,29 +532,19 @@ impl Ansicht2d {
                 &auf_schirm,
                 sicht,
                 &farben,
-                ui,
+                grund,
+                belegt,
             );
         }
-
-        // Labels on top, only where they fit into the piece.
-        let schrift = FontId::proportional(13.0);
-        for (i, t) in muster.teile.iter().enumerate() {
-            let v = t.versatz(self.ausgelegt);
-            if !self.anzeige.teilnamen || !auf_schirm(t, v) {
-                continue;
-            }
-            let farbe = if gewaehlt == Some(i) {
-                farben.linie_gewaehlt
+        // Names on top of everything.
+        for n in namen {
+            let pos = if n.hinterlegt {
+                painter.rect_filled(n.feld, 3.0, grund);
+                n.feld.center() - n.galley.size() / 2.0
             } else {
-                farben.text
+                n.feld.min
             };
-            let galley = painter.layout_no_wrap(t.kurz.clone(), schrift.clone(), farbe);
-            let breite_px = t.huelle.breite() * sicht.zoom;
-            if (galley.size().x as f64) < breite_px * 0.9 {
-                let mitte = bild(t.etikett, v);
-                let pos = mitte - galley.size() / 2.0;
-                painter.galley(pos, galley, farbe);
-            }
+            painter.galley(pos, n.galley, n.farbe);
         }
 
         if self.anzeige.massstab {
@@ -500,9 +553,72 @@ impl Ansicht2d {
         klick
     }
 
+    /// Where the piece names go. A name is shown where it fits into its piece (narrower than 90 %
+    /// of the piece on screen), at the piece's label point. The selected piece's name is shown in
+    /// any case – where it does not fit, above the piece on a backdrop, kept inside the view – and
+    /// placed first; a name that would cover one already placed is left out.
+    #[allow(clippy::too_many_arguments)]
+    fn namen(
+        &self,
+        painter: &egui::Painter,
+        muster: &Muster,
+        gewaehlt: Option<usize>,
+        bild: &dyn Fn(Pt, Pt) -> Pos2,
+        auf_schirm: &dyn Fn(&Teil, Pt) -> bool,
+        sicht: Sicht,
+        rect: Rect,
+        farben: &Farben,
+    ) -> Vec<Name> {
+        let schrift = FontId::proportional(13.0);
+        let mut namen: Vec<Name> = Vec::new();
+        let andere = (0..muster.teile.len()).filter(|&i| Some(i) != gewaehlt);
+        for i in gewaehlt.into_iter().chain(andere) {
+            let Some(t) = muster.teile.get(i) else {
+                continue;
+            };
+            let v = t.versatz(self.ausgelegt);
+            if !auf_schirm(t, v) {
+                continue;
+            }
+            let ist_gewaehlt = gewaehlt == Some(i);
+            let farbe = if ist_gewaehlt {
+                farben.linie_gewaehlt
+            } else {
+                farben.text
+            };
+            let galley = painter.layout_no_wrap(t.kurz.clone(), schrift.clone(), farbe);
+            let breite_px = t.huelle.breite() * sicht.zoom;
+            let (feld, hinterlegt) = if (galley.size().x as f64) < breite_px * 0.9 {
+                (
+                    Rect::from_center_size(bild(t.etikett, v), galley.size()),
+                    false,
+                )
+            } else if ist_gewaehlt {
+                let h = t.huelle;
+                let oben = bild(Pt::new((h.x0 + h.x1) / 2.0, h.y0), v);
+                let feld = Rect::from_center_size(oben, galley.size()).expand2(Vec2::new(3.0, 1.0));
+                let feld = feld.translate(Vec2::new(0.0, -(NAME_ABSTAND + feld.height() / 2.0)));
+                (in_die_flaeche(feld, rect.shrink(2.0)), true)
+            } else {
+                continue;
+            };
+            if namen.iter().any(|n| n.feld.intersects(feld)) {
+                continue;
+            }
+            namen.push(Name {
+                feld,
+                galley,
+                farbe,
+                hinterlegt,
+            });
+        }
+        namen
+    }
+
     /// The length of every boundary edge of the selected piece (of all pieces without a
-    /// selection) at the edge's middle, on a backdrop; edges shorter on screen than their text,
-    /// and labels that would cover one already drawn, are left out.
+    /// selection) at the edge's middle, on the backdrop `grund`; edges shorter on screen than
+    /// their text, and labels that would cover one of `belegt` (the piece names) or a label
+    /// already drawn, are left out.
     #[allow(clippy::too_many_arguments)]
     fn laengen(
         &self,
@@ -513,13 +629,10 @@ impl Ansicht2d {
         auf_schirm: &dyn Fn(&Teil, Pt) -> bool,
         sicht: Sicht,
         farben: &Farben,
-        ui: &egui::Ui,
+        grund: Color32,
+        mut belegt: Vec<Rect>,
     ) {
         let schrift = FontId::proportional(11.0);
-        // Labels already placed: one that would cover another is left out (zooming in shows it).
-        let mut belegt: Vec<Rect> = Vec::new();
-        let grund = ui.visuals().extreme_bg_color;
-        let hinterlegt = Color32::from_rgba_unmultiplied(grund.r(), grund.g(), grund.b(), 210);
         for (i, t) in muster.teile.iter().enumerate() {
             if gewaehlt.is_some_and(|g| g != i) {
                 continue;
@@ -550,7 +663,7 @@ impl Ansicht2d {
                     continue;
                 }
                 belegt.push(feld);
-                painter.rect_filled(feld, 3.0, hinterlegt);
+                painter.rect_filled(feld, 3.0, grund);
                 painter.galley(feld.min + Vec2::new(3.0, 1.0), galley, farben.text);
             }
         }
@@ -777,6 +890,27 @@ mod tests {
         assert!(halbweg(&[pt(1.0, 1.0), pt(1.0, 1.0)]).is_none());
         assert!(halbweg(&[]).is_none());
         assert_eq!(laenge_text(12.345), "12,3");
+    }
+
+    #[test]
+    fn feld_in_die_flaeche_schieben() {
+        let f = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 50.0));
+        let r = |x0, y0, x1, y1| Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+        // Inside: unchanged; over an edge: moved back in, size kept.
+        assert_eq!(
+            in_die_flaeche(r(10.0, 10.0, 30.0, 20.0), f),
+            r(10.0, 10.0, 30.0, 20.0)
+        );
+        assert_eq!(
+            in_die_flaeche(r(-5.0, -8.0, 15.0, 2.0), f),
+            r(0.0, 0.0, 20.0, 10.0)
+        );
+        assert_eq!(
+            in_die_flaeche(r(90.0, 45.0, 110.0, 55.0), f),
+            r(80.0, 40.0, 100.0, 50.0)
+        );
+        // Wider than the area: its left edge at the left.
+        assert_eq!(in_die_flaeche(r(50.0, 0.0, 250.0, 10.0), f).left(), 0.0);
     }
 
     #[test]

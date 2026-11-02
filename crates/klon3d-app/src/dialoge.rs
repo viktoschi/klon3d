@@ -86,10 +86,13 @@ impl App {
             Hilfe::Tastenkuerzel => "Tastenkürzel",
             Hilfe::Ueber => "Über klon3d",
         };
+        // Centred like the other dialogs: without a position egui puts a window at the top left,
+        // over the menu bar and the file toolbar.
         egui::Window::new(titel)
             .id(egui::Id::unique("hilfefenster"))
             .collapsible(false)
             .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 match h {
                     Hilfe::Tastenkuerzel => tastenkuerzel(ui),
