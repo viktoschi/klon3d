@@ -161,12 +161,21 @@ fn in_einem_menue(n: &egui_kittest::Node<'_>) -> bool {
     false
 }
 
+/// The button `name` of the menu bar – not a toolbar button of the same name ("Avatar") and not
+/// a submenu of the same name in an open menu (those lie below the bar).
+fn in_der_leiste<'t>(h: &'t Harness<'_, App>, name: &'t str) -> egui_kittest::Node<'t> {
+    h.query_all_by_role_and_label(Role::Button, name)
+        .filter(in_einem_menue)
+        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap_or_else(|| panic!("„{name}“ nicht in der Menüleiste"))
+}
+
 /// The entry `name` of an open menu or submenu – not a button of the menu bar (some submenus
 /// carry the name of a menu) and not a toolbar button of the same name. Where a submenu and an
 /// entry in it share the name (Anzeige › Avatar › Avatar), the entry of the innermost menu – the
 /// rightmost column – is meant; two of the same name in one menu are an error.
 fn im_menue<'t>(h: &'t Harness<'_, App>, name: &'t str) -> egui_kittest::Node<'t> {
-    let leiste = h.get_by_role_and_label(Role::Button, "Datei").rect().bottom();
+    let leiste = in_der_leiste(h, "Datei").rect().bottom();
     let mut treffer: Vec<_> = h
         .query_all_by_label(name)
         .filter(|n| in_einem_menue(n) && n.rect().top() >= leiste - 0.5)
@@ -183,7 +192,7 @@ fn im_menue<'t>(h: &'t Harness<'_, App>, name: &'t str) -> egui_kittest::Node<'t
 
 /// Open menu `pfad[0]` of the menu bar and in it the submenus `pfad[1..]`.
 fn menue_oeffnen(h: &mut Harness<'_, App>, pfad: &[&str]) {
-    h.get_by_role_and_label(Role::Button, pfad[0]).click();
+    in_der_leiste(h, pfad[0]).click();
     h.run();
     for name in &pfad[1..] {
         im_menue(h, name).click();
@@ -193,7 +202,7 @@ fn menue_oeffnen(h: &mut Harness<'_, App>, pfad: &[&str]) {
 
 /// Close the open menu (with its submenus) by clicking its button in the menu bar again.
 fn menue_schliessen(h: &mut Harness<'_, App>, menue: &str) {
-    h.get_by_role_and_label(Role::Button, menue).click();
+    in_der_leiste(h, menue).click();
     h.run();
 }
 
@@ -225,8 +234,12 @@ fn teileliste_zeigt_jedes_teil_mit_umriss() {
 
 #[test]
 fn nahtliste_zeigt_jede_naht_wie_klon3d_naehte() {
-    let h = mit_bluse();
+    let mut h = mit_bluse();
     let soll = soll_bluse();
+    // The seams are in their own tab of the object browser.
+    assert!(h.query_by_label("keine Kante in zwei Nähten").is_none());
+    h.get_by_role_and_label(Role::Tab, "Nähte").click();
+    h.run();
     assert_eq!(soll.naehte.len(), 24);
     for (kennung, la, lb, d) in &soll.naehte {
         let z = zeile(&h, kennung, 4);
@@ -368,7 +381,7 @@ fn menues_und_gesperrte_eintraege() {
     // The nine menus, left to right in one row.
     let knoepfe: Vec<egui::Rect> = MENUES
         .iter()
-        .map(|m| h.get_by_role_and_label(Role::Button, m).rect())
+        .map(|m| in_der_leiste(&h, m).rect())
         .collect();
     for (paar, namen) in knoepfe.windows(2).zip(MENUES.windows(2)) {
         assert!(
@@ -795,9 +808,9 @@ fn muster_ohne_massdatei_laedt_mit_gewaehlter() {
     let w = h.state().dateiwahl.as_ref().expect("Dialog");
     assert_eq!(w.zweck, Zweck::Massdatei);
     assert!(
-        w.ordner.ends_with(ordner.file_name().unwrap()),
+        w.liste.ordner.ends_with(ordner.file_name().unwrap()),
         "Dialog im Ordner des Musters: {}",
-        w.ordner.display()
+        w.liste.ordner.display()
     );
     im_dialog_waehlen(&mut h, &mass, "Datei wählen");
     assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
@@ -835,7 +848,7 @@ fn muster_ohne_massdatei_laedt_mit_gewaehlter() {
     assert!(h.state().fehlerfenster.is_none());
     let w = h.state().dateiwahl.as_ref().expect("Dialog");
     assert_eq!(w.zweck, Zweck::Massdatei);
-    assert!(w.ordner.ends_with(ordner.file_name().unwrap()));
+    assert!(w.liste.ordner.ends_with(ordner.file_name().unwrap()));
     im_dialog_waehlen(&mut h, &mass, "Datei wählen");
     assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
     assert_eq!(h.state().muster.as_ref().unwrap().teile.len(), 23);
@@ -1031,8 +1044,23 @@ fn kleinstes_fenster_laesst_der_ansicht_platz() {
     h.run();
     let ansicht = h.get_by_label("2D-Ansicht").rect();
     assert!(ansicht.width() >= 300.0, "2D-Ansicht nur {ansicht:?}");
-    // The seam list is still there, inside its panel.
-    assert!(h.query_by_role_and_label(Role::Label, "Nähte").is_some());
+    // The seam list is still there, inside its panel: its summary lies in the object browser,
+    // and the browser inside the window.
+    h.get_by_role_and_label(Role::Tab, "Nähte").click();
+    h.run();
+    h.get_by_label_contains("Nähten in der Toleranz").scroll_to_me();
+    h.run();
+    let browser = h.get_by_role_and_label(Role::Pane, "Objekt-Browser").rect();
+    let summe = h.get_by_label_contains("Nähten in der Toleranz").rect();
+    // Scrolled into view it shows in the browser (clipped at its edges: the line is wider than
+    // the narrow panel, which scrolls sideways).
+    assert!(
+        browser.intersects(summe)
+            && browser.y_range().contains(summe.top())
+            && browser.right() <= 800.0 + 0.5,
+        "Nahtliste {summe:?} im Objekt-Browser {browser:?}"
+    );
+    assert!(!browser.intersects(ansicht), "{browser:?} über {ansicht:?}");
 }
 
 #[test]

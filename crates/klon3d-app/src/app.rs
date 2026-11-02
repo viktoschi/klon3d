@@ -1,7 +1,8 @@
 //! The application: state, actions, keyboard shortcuts and persistence.
 //!
 //! [`App`] implements [`eframe::App`]. Every frame [`App::ui`] reads dropped files and keys, lays
-//! out the window and the floating dialogs ([`crate::dialoge`]) and then runs the queued actions.
+//! out the window ([`crate::fenster`]) and the floating dialogs ([`crate::dialoge`]) and then runs
+//! the queued actions.
 //!
 //! Menu entries, toolbar buttons, keys and clicks do not change the state directly: they queue an
 //! [`Aktion`], and [`App::ausfuehren`] runs the queue at the end of the frame. One place therefore
@@ -45,9 +46,11 @@ use crate::anordnung::{
     self, Anordnung, Anzeige2d, Bereich, Fenster, SCHLUESSEL_ANORDNUNG, SCHLUESSEL_ANZEIGE2D,
     SCHLUESSEL_ZULETZT,
 };
+use crate::bibliothek::Bibliothek;
 use crate::ansicht2d::Ansicht2d;
-use crate::dateiwahl::{passt, Dateiwahl, Zweck};
+use crate::dateiwahl::{auflisten, passt, Dateiwahl, Zweck};
 use crate::muster::{delta4, Ladeauftrag, Ladefehler, Muster, Nahtstand};
+use crate::panele::Reiter;
 
 /// Storage key of the theme (`"dunkel"` or `"hell"`).
 pub const SCHLUESSEL_THEMA: &str = "klon3d.thema";
@@ -64,12 +67,6 @@ pub const KUERZEL_BEENDEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::C
 
 /// How many frame intervals the frame rate is averaged over.
 const BILDZEITEN: usize = 60;
-
-/// Widest share of the window the left (pieces and seams) and the right (properties) panel may
-/// take: together they leave the 2D view at least 40 % of the width, also at the minimum window
-/// size. Wider content scrolls inside the panel. At the default size (1400) the left panel shows
-/// the whole seam grid.
-pub const SEITE_ANTEIL: (f32, f32) = (0.36, 0.24);
 
 /// A command, from a menu, a button, a key or a click.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +107,8 @@ pub enum Aktion {
     AnordnungZuruecksetzen,
     /// Show the library at the fabrics folder.
     StoffbibliothekZeigen,
+    /// Show a tab of the object browser.
+    ReiterZeigen(Reiter),
     /// Show the last error message in the error window again.
     FehlerZeigen,
     TastenkuerzelZeigen,
@@ -146,6 +145,10 @@ pub struct App {
     pub ansicht: Ansicht2d,
     /// Search text of the object browser; filters pieces and seams.
     pub suche: String,
+    /// The tab of the object browser shown.
+    pub reiter: Reiter,
+    /// The library panel.
+    pub bibliothek: Bibliothek,
     /// The last message for the status bar, and whether it is an error.
     pub meldung: String,
     pub meldung_fehler: bool,
@@ -165,6 +168,8 @@ pub struct App {
     pub aktiv: Fenster,
     /// The fabrics folder (`assets/stoffe`), if one was found at start.
     pub stoffordner: Option<PathBuf>,
+    /// File names of the fabrics (`.zfab`) in the fabrics folder, read at start.
+    pub stoffe: Vec<String>,
     /// Set by "Beenden"; the window is asked to close.
     pub beenden_angefordert: bool,
     /// Scroll the seam list into view in the next frame.
@@ -201,6 +206,15 @@ impl App {
             .unwrap_or_else(|| PathBuf::from("."));
         let mut ansicht = Ansicht2d::default();
         ansicht.anzeige = Anzeige2d::aus_text(&lies(SCHLUESSEL_ANZEIGE2D).unwrap_or_default());
+        let stoffordner = anordnung::stoffordner();
+        let stoffe = stoffordner
+            .as_deref()
+            .and_then(|o| auflisten(o, &["zfab"], false).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| !e.ordner)
+            .map(|e| e.name)
+            .collect();
         App {
             thema,
             auftrag: None,
@@ -212,6 +226,8 @@ impl App {
             naht_in_eigenschaften: false,
             ansicht,
             suche: String::new(),
+            reiter: Reiter::Teile,
+            bibliothek: Bibliothek::neu(&letzter_ordner),
             meldung: "Bereit – Datei › Öffnen… (Strg+O)".into(),
             meldung_fehler: false,
             fehlerfenster: None,
@@ -222,7 +238,8 @@ impl App {
             zuletzt: anordnung::zuletzt_aus_text(&lies(SCHLUESSEL_ZULETZT).unwrap_or_default()),
             anordnung: Anordnung::aus_text(&lies(SCHLUESSEL_ANORDNUNG).unwrap_or_default()),
             aktiv: Fenster::Zwei,
-            stoffordner: anordnung::stoffordner(),
+            stoffordner,
+            stoffe,
             beenden_angefordert: false,
             nahtliste_zeigen: false,
             panelgroessen_vergessen: false,
@@ -514,7 +531,12 @@ impl App {
                 };
                 self.naht_in_eigenschaften = self.naht_gewaehlt.is_some();
             }
-            Aktion::NahtlaengenZeigen => self.nahtliste_zeigen = true,
+            Aktion::NahtlaengenZeigen => {
+                self.anordnung.browser = true;
+                self.reiter = Reiter::Naehte;
+                self.nahtliste_zeigen = true;
+            }
+            Aktion::ReiterZeigen(r) => self.reiter = r,
             Aktion::BereichUmschalten(b) => {
                 self.anordnung.umschalten(b);
                 self.aktiv_pruefen();
@@ -539,8 +561,9 @@ impl App {
                 self.panelgroessen_vergessen = true;
             }
             Aktion::StoffbibliothekZeigen => {
-                if self.stoffordner.is_some() {
+                if let Some(o) = self.stoffordner.clone() {
                     self.anordnung.bibliothek = true;
+                    self.bibliothek.wechseln(&o);
                 }
             }
             Aktion::FehlerZeigen if self.meldung_fehler => {
@@ -710,37 +733,7 @@ impl eframe::App for App {
         self.abgelegte_dateien(&ctx);
         self.tasten(&ctx);
 
-        egui::Panel::top("menueleiste").show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| crate::menue::menues(self, ui));
-        });
-        if self.anordnung.leiste_datei {
-            egui::Panel::top("werkzeugleiste")
-                .show(ui, |ui| crate::menue::werkzeugleiste(self, ui));
-        }
-        egui::Panel::bottom("statusleiste").show(ui, |ui| crate::panele::statusleiste(self, ui));
-        let breite = ui.available_width();
-        let (links_max, rechts_max) = (breite * SEITE_ANTEIL.0, breite * SEITE_ANTEIL.1);
-        egui::Panel::left("teile_und_naehte")
-            .default_size(460.0)
-            .size_range(220.0f32.min(links_max)..=links_max)
-            .show(ui, |ui| crate::panele::links(self, ui));
-        egui::Panel::right("eigenschaften")
-            .default_size(320.0)
-            .size_range(180.0f32.min(rechts_max)..=rechts_max)
-            .show(ui, |ui| crate::panele::rechts(self, ui));
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            if self.anordnung.leiste_2d {
-                ui.horizontal(|ui| crate::menue::werkzeugleiste_2d(self, ui));
-            }
-            let klick =
-                self.ansicht
-                    .ui(ui, self.muster.as_ref(), self.gewaehlt, self.naht_gewaehlt);
-            match klick {
-                Some(crate::ansicht2d::Klick::Teil(i)) => self.aktion(Aktion::TeilWaehlen(i)),
-                Some(crate::ansicht2d::Klick::Leer) => self.aktion(Aktion::AuswahlAufheben),
-                None => {}
-            }
-        });
+        crate::fenster::zeichnen(self, ui);
         self.dialoge(&ctx);
         self.ablage_hinweis(&ctx);
 

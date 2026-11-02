@@ -1,14 +1,17 @@
-//! A small file dialog inside the window.
+//! Folder listings: the small file dialog inside the window, and the core it shares with the
+//! library panel ([`crate::bibliothek`]).
 //!
 //! No `rfd`: on Linux it pulls in GTK or a D-Bus portal stack, and a native dialog cannot be driven
-//! by the headless UI tests. This one shows the current folder with its subfolders and the files
-//! that match the filter (`.sm2d`, `.smis`, `.naehte`), goes up, and takes any path typed into the
-//! path field – absolute or relative to the current folder, on Windows also a bare drive letter
-//! (`D:`). The listing and the path handling are plain functions with unit tests; [`Dateiwahl::ui`]
-//! only shows them.
+//! by the headless UI tests. [`Verzeichnis`] is one folder with its subfolders and the files that
+//! match a list of extensions, its drive buttons and its rows (single click: open a folder or mark
+//! a file, double click on a file: act). [`Dateiwahl`] puts it into a window with a filter switch
+//! and a path field that takes any path – absolute or relative to the current folder, on Windows
+//! also a bare drive letter (`D:`); the library shows the same core docked at the left. The
+//! listing and the path handling are plain functions with unit tests; the `ui` functions only show
+//! them.
 //!
 //! Nothing here touches the disk per frame: the folder is read when it changes, the drive list
-//! once per dialog (on Windows from `GetLogicalDrives`, without opening a drive – a disconnected
+//! once per listing (on Windows from `GetLogicalDrives`, without opening a drive – a disconnected
 //! network drive would block), and only the visible rows of the listing are laid out.
 
 use std::path::{Path, PathBuf};
@@ -224,31 +227,41 @@ pub fn bereinigt(p: &Path) -> PathBuf {
     out
 }
 
-/// The dialog's state while it is open.
-#[derive(Debug, Clone)]
-pub struct Dateiwahl {
-    pub zweck: Zweck,
-    /// The folder shown.
-    pub ordner: PathBuf,
-    /// Text of the path field.
-    pub pfad_text: String,
-    /// Show all files, not only the matching ones.
-    pub alle: bool,
-    pub eintraege: Vec<Eintrag>,
-    /// Why the last action did not work.
-    pub fehler: Option<String>,
-    /// The drive buttons, read once when the dialog opens ([`laufwerke`]).
-    pub laufwerke: Vec<PathBuf>,
-    markiert: Option<PathBuf>,
+/// What a click on a row of a [`Verzeichnis`] means.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Zeilenklick {
+    /// A folder was clicked: open it.
+    Ordner(PathBuf),
+    /// A file was clicked once: it is marked now.
+    Markiert(PathBuf),
+    /// A file was double-clicked: act on it.
+    Doppelt(PathBuf),
 }
 
-impl Dateiwahl {
-    /// Open the dialog in `ordner` (falls back to the current folder if it is not readable).
-    pub fn neu(zweck: Zweck, ordner: &Path) -> Dateiwahl {
-        let mut d = Dateiwahl {
-            zweck,
+/// One folder as a listing – the core of the file dialog and of the library.
+#[derive(Debug, Clone)]
+pub struct Verzeichnis {
+    /// The folder shown.
+    pub ordner: PathBuf,
+    /// Extensions of the files listed (lower case, without the dot).
+    pub endungen: &'static [&'static str],
+    /// List all files, not only the matching ones.
+    pub alle: bool,
+    pub eintraege: Vec<Eintrag>,
+    /// Why the last change of folder did not work.
+    pub fehler: Option<String>,
+    /// The drive buttons, read once when the listing is made ([`laufwerke`]).
+    pub laufwerke: Vec<PathBuf>,
+    /// The file marked by a single click.
+    pub markiert: Option<PathBuf>,
+}
+
+impl Verzeichnis {
+    /// The listing of `ordner` (the current folder if `ordner` is not readable).
+    pub fn neu(endungen: &'static [&'static str], ordner: &Path) -> Verzeichnis {
+        let mut v = Verzeichnis {
             ordner: PathBuf::new(),
-            pfad_text: String::new(),
+            endungen,
             alle: false,
             eintraege: Vec::new(),
             fehler: None,
@@ -260,51 +273,160 @@ impl Dateiwahl {
         } else {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
         };
-        d.wechseln(&start);
-        d
+        v.wechseln(&start);
+        v
+    }
+
+    /// Show folder `ordner`; on an error the old folder stays, the error is kept and `false`
+    /// returned.
+    pub fn wechseln(&mut self, ordner: &Path) -> bool {
+        let ziel = bereinigt(&std::path::absolute(ordner).unwrap_or_else(|_| ordner.to_path_buf()));
+        match auflisten(&ziel, self.endungen, self.alle) {
+            Ok(e) => {
+                self.eintraege = e;
+                self.ordner = ziel;
+                self.fehler = None;
+                self.markiert = None;
+                true
+            }
+            Err(e) => {
+                self.fehler = Some(e);
+                false
+            }
+        }
+    }
+
+    /// The folder above, if there is one.
+    pub fn oben(&self) -> Option<PathBuf> {
+        self.ordner.parent().map(Path::to_path_buf)
+    }
+
+    /// Re-read the folder (e.g. after switching the filter).
+    pub fn neu_lesen(&mut self) -> bool {
+        let o = self.ordner.clone();
+        self.wechseln(&o)
+    }
+
+    /// One button per drive; returns the drive clicked.
+    pub fn laufwerksknoepfe(&self, ui: &mut egui::Ui) -> Option<PathBuf> {
+        let mut ziel = None;
+        for lw in &self.laufwerke {
+            let name = lw.display().to_string();
+            if ui
+                .button(&name)
+                .on_hover_text(format!("zu {name} wechseln"))
+                .clicked()
+            {
+                ziel = Some(lw.clone());
+            }
+        }
+        ziel
+    }
+
+    /// The rows of the listing in a scroll area at most `max_hoehe` high. A single click marks a
+    /// file ([`Verzeichnis::markiert`]) or asks to open a folder, a double click on a file asks to
+    /// act on it; the caller decides. Files for which `gesperrt` says so are shown disabled with
+    /// the hover text `warum`. Every row has the same height, so only the visible ones are laid out
+    /// – a folder with tens of thousands of files stays quick.
+    pub fn zeilen(
+        &mut self,
+        ui: &mut egui::Ui,
+        max_hoehe: f32,
+        gesperrt: impl Fn(&Eintrag) -> bool,
+        warum: &str,
+    ) -> Option<Zeilenklick> {
+        let zeile = zeilenhoehe(ui);
+        let mut klick = None;
+        egui::ScrollArea::vertical()
+            .max_height(max_hoehe)
+            .auto_shrink([false, false])
+            .show_rows(ui, zeile, self.eintraege.len(), |ui, sichtbar| {
+                for e in &self.eintraege[sichtbar] {
+                    let text = if e.ordner {
+                        format!("{}{}", e.name, std::path::MAIN_SEPARATOR)
+                    } else {
+                        e.name.clone()
+                    };
+                    let frei = e.ordner || !gesperrt(e);
+                    let gewaehlt = self.markiert.as_ref() == Some(&e.pfad);
+                    let r = ui
+                        .add_enabled(
+                            frei,
+                            egui::Button::selectable(gewaehlt, text)
+                                .min_size(egui::vec2(0.0, zeile)),
+                        )
+                        .on_disabled_hover_text(warum);
+                    if e.ordner && r.clicked() {
+                        klick = Some(Zeilenklick::Ordner(e.pfad.clone()));
+                    } else if !e.ordner && r.double_clicked() {
+                        klick = Some(Zeilenklick::Doppelt(e.pfad.clone()));
+                    } else if !e.ordner && r.clicked() {
+                        klick = Some(Zeilenklick::Markiert(e.pfad.clone()));
+                    }
+                }
+            });
+        if let Some(Zeilenklick::Markiert(p) | Zeilenklick::Doppelt(p)) = &klick {
+            self.markiert = Some(p.clone());
+        }
+        klick
+    }
+}
+
+/// The dialog's state while it is open.
+#[derive(Debug, Clone)]
+pub struct Dateiwahl {
+    pub zweck: Zweck,
+    /// The folder shown.
+    pub liste: Verzeichnis,
+    /// Text of the path field.
+    pub pfad_text: String,
+}
+
+impl Dateiwahl {
+    /// Open the dialog in `ordner` (falls back to the current folder if it is not readable).
+    pub fn neu(zweck: Zweck, ordner: &Path) -> Dateiwahl {
+        let liste = Verzeichnis::neu(zweck.endungen(), ordner);
+        let pfad_text = liste.ordner.display().to_string();
+        Dateiwahl {
+            zweck,
+            liste,
+            pfad_text,
+        }
     }
 
     /// Show folder `ordner`; on an error the old folder stays and the error is shown.
     pub fn wechseln(&mut self, ordner: &Path) {
-        let ziel = bereinigt(&std::path::absolute(ordner).unwrap_or_else(|_| ordner.to_path_buf()));
-        match auflisten(&ziel, self.zweck.endungen(), self.alle) {
-            Ok(e) => {
-                self.eintraege = e;
-                self.pfad_text = ziel.display().to_string();
-                self.ordner = ziel;
-                self.fehler = None;
-                self.markiert = None;
-            }
-            Err(e) => self.fehler = Some(e),
+        if self.liste.wechseln(ordner) {
+            self.pfad_text = self.liste.ordner.display().to_string();
         }
     }
 
     /// One folder up.
     pub fn hoch(&mut self) {
-        if let Some(p) = self.ordner.parent().map(Path::to_path_buf) {
+        if let Some(p) = self.liste.oben() {
             self.wechseln(&p);
         }
     }
 
     /// Re-read the folder (e.g. after switching the filter).
     pub fn neu_lesen(&mut self) {
-        let o = self.ordner.clone();
+        let o = self.liste.ordner.clone();
         self.wechseln(&o);
     }
 
     /// What the path field means: a folder is opened, a matching file is the answer.
     pub fn bestaetigen(&mut self) -> Option<Antwort> {
-        let ziel = eingabe_aufloesen(&self.pfad_text, &self.ordner);
+        let ziel = eingabe_aufloesen(&self.pfad_text, &self.liste.ordner);
         if ziel.is_dir() {
             self.wechseln(&ziel);
             return None;
         }
         if !ziel.is_file() {
-            self.fehler = Some(format!("Datei nicht gefunden: {}", ziel.display()));
+            self.liste.fehler = Some(format!("Datei nicht gefunden: {}", ziel.display()));
             return None;
         }
-        if !self.alle && !passt(&ziel, self.zweck.endungen()) {
-            self.fehler = Some(format!(
+        if !self.liste.alle && !passt(&ziel, self.zweck.endungen()) {
+            self.liste.fehler = Some(format!(
                 "{} ist keine {}-Datei (Filter ausschalten mit „alle Dateien“)",
                 ziel.display(),
                 self.filter_text()
@@ -325,7 +447,7 @@ impl Dateiwahl {
 
     /// The filter as the footer shows it.
     pub fn filter_zeile(&self) -> String {
-        if self.alle {
+        if self.liste.alle {
             "Filter: aus (alle Dateien)".into()
         } else {
             format!("Filter: {}", self.filter_text())
@@ -334,7 +456,7 @@ impl Dateiwahl {
 
     /// What an empty listing says.
     pub fn leer_text(&self) -> String {
-        if self.alle {
+        if self.liste.alle {
             "keine Einträge".into()
         } else {
             format!("keine Ordner und keine {}-Dateien", self.filter_text())
@@ -359,22 +481,11 @@ impl Dateiwahl {
                     {
                         self.hoch();
                     }
-                    let mut ziel = None;
-                    for lw in &self.laufwerke {
-                        let name = lw.display().to_string();
-                        if ui
-                            .button(&name)
-                            .on_hover_text(format!("zu {name} wechseln"))
-                            .clicked()
-                        {
-                            ziel = Some(lw.clone());
-                        }
-                    }
-                    if let Some(lw) = ziel {
+                    if let Some(lw) = self.liste.laufwerksknoepfe(ui) {
                         self.wechseln(&lw);
                     }
                     if ui
-                        .checkbox(&mut self.alle, "alle Dateien")
+                        .checkbox(&mut self.liste.alle, "alle Dateien")
                         .on_hover_text(format!("aus: nur {}", self.filter_text()))
                         .changed()
                     {
@@ -393,46 +504,21 @@ impl Dateiwahl {
                         antwort = self.bestaetigen();
                     }
                 });
-                if let Some(f) = &self.fehler {
+                if let Some(f) = &self.liste.fehler {
                     ui.colored_label(ui.visuals().error_fg_color, f);
                 }
                 ui.separator();
                 let unten = 36.0;
-                if self.eintraege.is_empty() {
+                if self.liste.eintraege.is_empty() {
                     ui.weak(self.leer_text());
                 }
-                // Every row has the same height, so only the visible ones are laid out – a folder
-                // with tens of thousands of files stays quick.
-                let zeile = zeilenhoehe(ui);
-                egui::ScrollArea::vertical()
-                    .max_height((ui.available_height() - unten).max(80.0))
-                    .auto_shrink([false, false])
-                    .show_rows(ui, zeile, self.eintraege.len(), |ui, sichtbar| {
-                        let mut wechsel = None;
-                        for e in &self.eintraege[sichtbar] {
-                            let text = if e.ordner {
-                                format!("{}{}", e.name, std::path::MAIN_SEPARATOR)
-                            } else {
-                                e.name.clone()
-                            };
-                            let gewaehlt = self.markiert.as_ref() == Some(&e.pfad);
-                            let r = ui.add(
-                                egui::Button::selectable(gewaehlt, text)
-                                    .min_size(egui::vec2(0.0, zeile)),
-                            );
-                            if e.ordner && r.clicked() {
-                                wechsel = Some(e.pfad.clone());
-                            } else if !e.ordner && r.double_clicked() {
-                                antwort = Some(Antwort::Gewaehlt(e.pfad.clone()));
-                            } else if !e.ordner && r.clicked() {
-                                self.markiert = Some(e.pfad.clone());
-                                self.pfad_text = e.pfad.display().to_string();
-                            }
-                        }
-                        if let Some(p) = wechsel {
-                            self.wechseln(&p);
-                        }
-                    });
+                let hoehe = (ui.available_height() - unten).max(80.0);
+                match self.liste.zeilen(ui, hoehe, |_| false, "") {
+                    Some(Zeilenklick::Ordner(p)) => self.wechseln(&p),
+                    Some(Zeilenklick::Doppelt(p)) => antwort = Some(Antwort::Gewaehlt(p)),
+                    Some(Zeilenklick::Markiert(p)) => self.pfad_text = p.display().to_string(),
+                    None => {}
+                }
                 ui.separator();
                 ui.horizontal(|ui| {
                     // Not just "Öffnen": the toolbar has a button of that name.
@@ -589,50 +675,56 @@ mod tests {
     fn dialog_wechselt_ordner_und_waehlt_datei() {
         let d = ordner("dialog");
         let mut w = Dateiwahl::neu(Zweck::Muster, &d);
-        assert_eq!(w.ordner, bereinigt(&std::path::absolute(&d).unwrap()));
-        assert_eq!(w.eintraege.len(), 4);
+        assert_eq!(w.liste.ordner, bereinigt(&std::path::absolute(&d).unwrap()));
+        assert_eq!(w.liste.eintraege.len(), 4);
 
         // A folder in the path field is opened.
         w.pfad_text = "Zweig".into();
         assert_eq!(w.bestaetigen(), None);
-        assert!(w.ordner.ends_with("Zweig"));
-        assert!(w.eintraege.is_empty());
+        assert!(w.liste.ordner.ends_with("Zweig"));
+        assert!(w.liste.eintraege.is_empty());
         w.hoch();
-        assert_eq!(w.ordner, bereinigt(&std::path::absolute(&d).unwrap()));
+        assert_eq!(w.liste.ordner, bereinigt(&std::path::absolute(&d).unwrap()));
 
         // A matching file is the answer, with any case of the extension.
         w.pfad_text = "A.SM2D".into();
         assert_eq!(
             w.bestaetigen(),
-            Some(Antwort::Gewaehlt(w.ordner.join("A.SM2D")))
+            Some(Antwort::Gewaehlt(w.liste.ordner.join("A.SM2D")))
         );
 
         // A file that does not match the filter or does not exist gives a message.
         w.pfad_text = "notiz.txt".into();
         assert_eq!(w.bestaetigen(), None);
-        assert!(w.fehler.as_deref().unwrap().contains("keine .sm2d-Datei"));
-        w.alle = true;
+        assert!(w
+            .liste
+            .fehler
+            .as_deref()
+            .unwrap()
+            .contains("keine .sm2d-Datei"));
+        w.liste.alle = true;
         assert!(w.bestaetigen().is_some());
         w.pfad_text = "fehlt.sm2d".into();
         assert_eq!(w.bestaetigen(), None);
         assert!(w
+            .liste
             .fehler
             .as_deref()
             .unwrap()
             .starts_with("Datei nicht gefunden"));
 
         // An unreadable folder keeps the old one.
-        let vorher = w.ordner.clone();
+        let vorher = w.liste.ordner.clone();
         w.wechseln(&d.join("gibt_es_nicht"));
-        assert_eq!(w.ordner, vorher);
-        assert!(w.fehler.is_some());
+        assert_eq!(w.liste.ordner, vorher);
+        assert!(w.liste.fehler.is_some());
 
         // The footer and an empty listing say whether the filter is on.
-        w.alle = false;
+        w.liste.alle = false;
         assert_eq!(w.filter_zeile(), "Filter: .sm2d");
         w.wechseln(&d.join("Zweig"));
         assert_eq!(w.leer_text(), "keine Ordner und keine .sm2d-Dateien");
-        w.alle = true;
+        w.liste.alle = true;
         assert_eq!(w.filter_zeile(), "Filter: aus (alle Dateien)");
         assert_eq!(w.leer_text(), "keine Einträge");
         let _ = std::fs::remove_dir_all(&d);
@@ -649,7 +741,7 @@ mod tests {
             std::fs::write(d.join(format!("teil_{i:04}.sm2d")), "").unwrap();
         }
         let mut w = Dateiwahl::neu(Zweck::Muster, &d);
-        assert_eq!(w.eintraege.len(), 3000);
+        assert_eq!(w.liste.eintraege.len(), 3000);
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let mut zeilen = 0;

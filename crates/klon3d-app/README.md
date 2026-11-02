@@ -16,21 +16,32 @@ done and committed; update "Status" at the top when you stop.
   Hilfe; the old "Simulation", "Ansicht" and "Prüfen" menus are gone), submenus, checkboxes for
   toggles, radio buttons for design and language, every later entry disabled with the hover text
   `SPAETER`. New: Datei › Zuletzt geöffnet (last 10 patterns, stored, missing files disabled,
-  "Liste leeren"), Datei › Informationen… (window `dialoge.rs`), 2D toggles Längen (edge
+  "Liste leeren"), Datei › Informationen… (window in `dialoge.rs`), 2D toggles Längen (edge
   lengths in cm at each edge's middle, `ansicht2d::halbweg`), Teilnamen, Maßstab; shortcuts
   Umschalt+S (Nähte), Umschalt+Z (Längen), Strg+Tab (3D/2D window). New module `anordnung.rs`:
   arrangement, 2D toggles and recent files as forgiving `name=wert` texts in eframe's storage
   (missing keys = defaults); fabrics folder `assets/stoffe` searched upwards from the program
-  and the current folder. The floating windows moved from `app.rs` to `dialoge.rs`. The file
-  toolbar (Neu, Öffnen, Speichern, Rückgängig, Wiederholen, Hell/Dunkel) replaced the old
-  toolbar; the 2D toolbar sits above the 2D view for now.
-* **Next – part 2 (layout):** library panel left (`bibliothek.rs`, shared core with the file
-  dialog), object browser (tabs Teile | Nähte | Stoffe) and properties (piece or seam) right,
-  3D | 2D windows with divider, own toolbars, active-window frame (`fenster.rs`); the Fenster
-  toggles of the Anzeige menu already flip `App::anordnung`, the layout does not honour them yet.
-  **Part 3 (tests)** as listed in task D of the session prompt: Fenster toggles, Strg+Tab,
+  and the current folder. The floating windows moved from `app.rs` to `dialoge.rs`.
+* **Part 2 – layout:** `fenster.rs` lays out menu bar, file toolbar (Neu, Öffnen, Speichern,
+  Rückgängig, Wiederholen, Hell/Dunkel), status bar, the library left (`bibliothek.rs`), object
+  browser above properties right, and the 3D window (placeholder canvas "3D-Ansicht") left of
+  the 2D window with a draggable divider; each window has its own toolbar (wrapped when narrow)
+  and a frame, the active one highlighted, a press inside activates it. Both splits (3D | 2D and
+  browser | properties) are stored shares (`Anordnung::teilung`, `teilung_rechts`), not pixel
+  sizes – a nested egui panel stored the size of the first, tiny frame. Side panels are capped
+  at 17 % / 27 % of the width (`fenster::SEITE_ANTEIL`); with both windows shown the 2D window
+  keeps ≥ 304 (300 inside its frame) and the 3D window ≥ 120 as long as there is room
+  (`fenster::teilung_breiten`), so at 800×500 the 2D view keeps its 300 px. `dateiwahl.rs` now
+  has the shared core `Verzeichnis` (listing, drive buttons, rows with single/double click);
+  `Dateiwahl` (modal) and `Bibliothek` (docked) both use it. The object browser has the tabs
+  Teile | Nähte | Stoffe (AccessKit role "tab"); the properties show the seam clicked last
+  (Kennung, Bezeichnung, `L_A cm`, `L_B cm`, `Δ cm`, both sides with pieces and edges, notch
+  pairs, notches without partner) or the selected piece. Every area carries an AccessKit "pane"
+  name for the tests (`fenster::flaeche`).
+* **Next – part 3 (tests)** as listed in task D of the session prompt: Fenster toggles, Strg+Tab,
   Umschalt+S/Z (not in the search field), recent files, library double clicks, seam properties,
-  old stored state, layout reset.
+  old stored state, layout reset; then screenshots (dark, light, Längen with a piece selected)
+  under `/tmp/claude-0/shots2/`.
 
 **2026-11-01:** steps 1–7 done. Step 7 (review of the whole crate) found 25 defects; all are fixed
 in five commits (groups A–E below, each builds and keeps `cargo +1.99 test --locked -p klon3d-app`
@@ -235,7 +246,7 @@ seam deviation, last message.
 - [x] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
       (25 findings, list above)
 - [ ] 7b. Window arrangement like CLO: (1) menus and shortcuts – done; (2) layout with library,
-      3D | 2D split, object browser and properties, toolbars, persistence; (3) tests
+      3D | 2D split, object browser and properties, toolbars, persistence – done; (3) tests
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`
       – both done during step 7 (build **and** test in the job); open: the job passing on CI

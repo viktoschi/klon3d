@@ -21,6 +21,9 @@ pub const ZULETZT_MAX: usize = 10;
 
 /// Default share of the centre width taken by the 3D window.
 pub const TEILUNG_VORGABE: f32 = 0.5;
+/// Default share of the right panel's height taken by the object browser (the properties get
+/// the rest).
+pub const TEILUNG_RECHTS_VORGABE: f32 = 0.6;
 
 /// A part of the window that can be shown or hidden.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -77,6 +80,8 @@ pub struct Anordnung {
     pub leiste_2d: bool,
     /// Share of the centre width taken by the 3D window, in `0.0..=1.0`.
     pub teilung: f32,
+    /// Share of the right panel's height taken by the object browser, in `0.0..=1.0`.
+    pub teilung_rechts: f32,
 }
 
 impl Default for Anordnung {
@@ -91,6 +96,7 @@ impl Default for Anordnung {
             leiste_3d: true,
             leiste_2d: true,
             teilung: TEILUNG_VORGABE,
+            teilung_rechts: TEILUNG_RECHTS_VORGABE,
         }
     }
 }
@@ -134,13 +140,14 @@ impl Anordnung {
         *f = !*f;
     }
 
-    /// `bibliothek=1;browser=1;…;teilung=0.500`
+    /// `bibliothek=1;browser=1;…;teilung=0.500;teilung_rechts=0.600`
     pub fn als_text(&self) -> String {
         let mut teile: Vec<String> = Bereich::ALLE
             .iter()
             .map(|(b, name, _)| format!("{name}={}", u8::from(self.sichtbar(*b))))
             .collect();
         teile.push(format!("teilung={:.3}", self.teilung));
+        teile.push(format!("teilung_rechts={:.3}", self.teilung_rechts));
         teile.join(";")
     }
 
@@ -153,11 +160,11 @@ impl Anordnung {
                 if let Some(an) = schalter(wert) {
                     a.setzen(*b, an);
                 }
-            } else if name == "teilung" {
-                if let Ok(t) = wert.parse::<f32>() {
-                    if t.is_finite() {
-                        a.teilung = t.clamp(0.0, 1.0);
-                    }
+            } else if let Some(anteil) = anteil(wert) {
+                match name {
+                    "teilung" => a.teilung = anteil,
+                    "teilung_rechts" => a.teilung_rechts = anteil,
+                    _ => {}
                 }
             }
         }
@@ -222,6 +229,14 @@ fn paare(text: &str) -> impl Iterator<Item = (&str, &str)> {
     text.split(';')
         .filter_map(|p| p.split_once('='))
         .map(|(n, w)| (n.trim(), w.trim()))
+}
+
+/// A share in `0.0..=1.0`; values outside are clamped, anything else is `None`.
+fn anteil(wert: &str) -> Option<f32> {
+    wert.parse::<f32>()
+        .ok()
+        .filter(|t| t.is_finite())
+        .map(|t| t.clamp(0.0, 1.0))
 }
 
 fn schalter(wert: &str) -> Option<bool> {
@@ -316,6 +331,7 @@ mod tests {
         a.umschalten(Bereich::Bibliothek);
         a.setzen(Bereich::Leiste3d, false);
         a.teilung = 0.3;
+        a.teilung_rechts = 0.25;
         let b = Anordnung::aus_text(&a.als_text());
         assert_eq!(b, a);
         assert!(!b.sichtbar(Bereich::Bibliothek) && b.sichtbar(Bereich::Browser));
@@ -330,6 +346,14 @@ mod tests {
         assert!(a.browser && !a.fenster3d);
         assert_eq!(a.teilung, TEILUNG_VORGABE);
         assert_eq!(Anordnung::aus_text("teilung=7").teilung, 1.0);
+        assert_eq!(
+            Anordnung::aus_text("teilung_rechts=-1").teilung_rechts,
+            0.0
+        );
+        assert_eq!(
+            Anordnung::aus_text("teilung_rechts=x").teilung_rechts,
+            TEILUNG_RECHTS_VORGABE
+        );
         assert_eq!(Anzeige2d::aus_text("unsinn"), Anzeige2d::default());
         let z = Anzeige2d::aus_text(" laengen = 1 ;massstab=0");
         assert!(z.laengen && !z.massstab && z.naehte && z.teilnamen);
