@@ -3,8 +3,10 @@ name = "klon3d-app"
 description = "Anwendungsfenster (Stufe 6): Muster laden, prüfen, später simulieren"
 version.workspace = true
 edition.workspace = true
-# eframe 0.37 needs Rust 1.95.
-rust-version = "1.95"
+# Rust 1.99: the workspace's klon3d-pattern does not build with 1.97 (an elided lifetime in an
+# associated const, geom.rs), and 1.99 is what the main machine and CI use. eframe 0.37 alone would
+# need 1.95.
+rust-version = "1.99"
 license.workspace = true
 
 [dependencies]

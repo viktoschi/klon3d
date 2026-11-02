@@ -12,8 +12,8 @@ done and committed; update "Status" at the top when you stop.
 **2026-11-01:** step 7 (review) in progress. A review of the whole crate found 25 defects (numbered
 below as in the review); they are fixed in this order, one commit per group, each commit builds and
 `cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **groups A (loading),
-B (drawing and panels) and C (file dialog)**. Next: groups D–E below, then tick step 7; after that
-steps 8–11.
+B (drawing and panels), C (file dialog) and D (Windows build, CI, manifest)**. Next: group E below,
+then tick step 7; after that steps 8–11.
 
 Steps 1–6 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
@@ -44,7 +44,9 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   properties panel, status bar (message cut with "…", full text on hover, a click shows an error
   again). Side panels are capped at 36 % / 24 % of the window (`app::SEITE_ANTEIL`) and scroll in
   both directions.
-* `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500.
+* `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500;
+  a Windows release build is a GUI program (no console window), its messages also go to a message
+  box.
 * `tests/oberflaeche.rs` – pieces and seams against an independent `klon3d-pattern` evaluation
   (Δ formatted like the CLI), list click and view click select a piece and fill the properties,
   theme toggle + save/restore through an in-memory `eframe::Storage`, all five menus with their
@@ -106,11 +108,20 @@ Windows-only code (`cfg(windows)`) checked with `cargo +1.99 check --locked -p k
 --all-targets --target x86_64-pc-windows-msvc` (compiles, no warnings); not run on Windows yet –
 the Windows CI job (finding 16) is the first place that runs it.
 
-**Group D – Windows build, CI, manifest** (`main.rs`, `Cargo.toml` of the crate, `ci.yml`) – open:
+**Group D – Windows build, CI, manifest** (`main.rs`, `Cargo.toml` of the crate, `ci.yml`) – done:
 
-- [ ] 16 [medium] Windows CI job does not build or test klon3d-app
-- [ ] 18 [low] release build on Windows opens a console window
-- [ ] 19 [low] `rust-version = "1.95"` lower than what builds the crate (1.99)
+- [x] 16 [medium] Windows CI job did not build or test klon3d-app: the `viewer` job (name kept, in
+      case a branch rule requires it) now also runs `cargo build --locked -p klon3d-app
+      --all-targets` and `cargo test --locked -p klon3d-app --no-fail-fast`; timeout 30 → 45 min.
+      **Not yet seen running on CI** – the first CI run of the PR shows whether the tests pass on
+      Windows (Windows-only test code: `attrib +h`, `SystemDrive`, `D:` → `D:\`)
+- [x] 18 [low] release build on Windows opened a console window:
+      `windows_subsystem = "windows"` in release builds; usage and "Fenster lässt sich nicht
+      öffnen" also in a `MessageBoxW` there (cross-checked with `--release --target
+      x86_64-pc-windows-msvc`, not run on Windows)
+- [x] 19 [low] `rust-version` raised from 1.95 to 1.99 (checked: the default 1.97 now stops with
+      "klon3d-app requires rustc 1.99"); the workspace's own `rust-version = "1.85"` is outside this
+      task's scope and still too low
 
 **Group E – test honesty** (`tests/oberflaeche.rs`, `muster.rs` tests) – open:
 
@@ -143,7 +154,7 @@ exist but are disabled.
 |---|---|---|
 | Framework | `eframe` 0.37 with `wgpu_no_default_features` + our own `wgpu` 30 dependency (same features as `klon3d-sim`) | egui-wgpu 0.37 uses wgpu 30, the same as the solver – later the simulation can share the device (ADR-018); no second wgpu in `Cargo.lock` |
 | eframe features | `accesskit`, `default_fonts`, `persistence`, `wgpu_no_default_features`, `x11`, `wayland` | `persistence` saves the theme; `accesskit` lets tests find widgets by label |
-| Rust | the crate says `rust-version = "1.95"` (eframe's minimum); build with **1.99** like the main machine | the workspace itself no longer builds with 1.97 (`geom.rs:779`, elided lifetime in a `const`) |
+| Rust | the crate says `rust-version = "1.99"`; build with **1.99** like the main machine and CI (`stable`) | the workspace's `klon3d-pattern` no longer builds with 1.97 (`geom.rs:779`, elided lifetime in a `const`); eframe alone would need 1.95. With 1.97 cargo now stops with "klon3d-app requires rustc 1.99" |
 | File dialog | own small dialog inside egui (directory list, filter `.sm2d`/`.smis`/`.naehte`), plus drag and drop and a command-line argument | no `rfd` – on Linux it pulls GTK or a D-Bus portal stack |
 | Tests | `egui_kittest` 0.37 (dev-dependency) drives the UI headless by labels; no GPU needed | screenshots only where a GPU adapter exists, otherwise skipped (AGENTS.md: tests without data skip) |
 | Language | UI text German, identifiers German like the rest of the code, **comments English** (AGENTS.md) | |
