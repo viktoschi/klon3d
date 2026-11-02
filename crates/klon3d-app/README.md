@@ -11,19 +11,21 @@ done and committed; update "Status" at the top when you stop.
 
 **2026-11-01:** step 7 (review) in progress. A review of the whole crate found 25 defects (numbered
 below as in the review); they are fixed in this order, one commit per group, each commit builds and
-`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **group A (loading)**.
-Next: groups B–E below, then tick step 7; after that steps 8–11.
+`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **groups A (loading) and
+B (drawing and panels)**. Next: groups C–E below, then tick step 7; after that steps 8–11.
 
 Steps 1–6 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
 lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `größte Abweichung N07L
 Δ -0.0737 cm` as `klon3d naehte` prints). Files:
 
-* `src/muster.rs` – pattern as plain data (outlines, fill triangulation, layout, boundary
-  edges, seam report, errors as `Ladefehler` – `Massdatei` for errors another measurement file can
+* `src/muster.rs` – pattern as plain data (outlines, fill as non-overlapping triangles by the
+  even-odd rule in horizontal bands, layout, boundary edges, circumference `None` when the boundary
+  cannot be resolved, seam report, errors as `Ladefehler` – `Massdatei` for errors another measurement file can
   cure, `Sonst` otherwise –, reader panics caught).
-* `src/ansicht2d.rs` – view math as plain functions (`Sicht`, `treffer`, scale bar) and the painting;
-  refits on size changes until the user pans or zooms.
+* `src/ansicht2d.rs` – view math as plain functions (`Sicht`, `treffer`, scale bar) and the painting
+  (fills, then the selected piece as a 6 px band, then the seam strokes, then labels); refits on
+  size changes until the user pans or zooms.
 * `src/dateiwahl.rs` – in-app file dialog (confirm button "Datei öffnen"/"Datei wählen", not
   "Öffnen", which is the toolbar button).
 * `src/app.rs` – `App` (`eframe::App`): every command is an `Aktion` run at the end of the frame
@@ -36,7 +38,9 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
 * `src/menue.rs` – menu bar and toolbar; later entries disabled with hover "folgt in einer späteren
   Aufgabe"; entries that need a pattern disabled without one.
 * `src/panele.rs` – search field, measurement file in use ("Maße: …"), piece list, seam list,
-  properties panel, status bar.
+  properties panel, status bar (message cut with "…", full text on hover, a click shows an error
+  again). Side panels are capped at 36 % / 24 % of the window (`app::SEITE_ANTEIL`) and scroll in
+  both directions.
 * `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500.
 * `tests/oberflaeche.rs` – pieces and seams against an independent `klon3d-pattern` evaluation
   (Δ formatted like the CLI), list click and view click select a piece and fill the properties,
@@ -44,7 +48,9 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   disabled entries, shortcuts incl. "no letters while the search field has focus", file dialog,
   drag and drop (also pattern + measurement file in one drop, both orders), a pattern without its
   measurement file loads after choosing one (menu and error window), relative paths stored
-  absolute, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster` are
+  absolute, "–" instead of a circumference where `klon3d naehte` prints none (measurement file with
+  half the values), at 800×500 the 2D view keeps ≥ 300 px, a long status message stays inside the
+  window and reopens the error window, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster` are
   loaded (see finding 20 for what that test asserts).
 
 `Cargo.lock` change for the kittest `eframe` feature: one dependency edge (`egui_kittest` → `eframe`).
@@ -66,19 +72,21 @@ Severity in brackets. Tick when fixed and committed; "won't fix" needs a reason 
 - [x] 12 [low] Prüfen › Nahtlängen and Ansicht › Einpassen enabled without a pattern; the seam-list
       scroll flag is also cleared on load
 
-**Group B – drawing and panels** (`muster.rs`, `ansicht2d.rs`, `panele.rs`, `app.rs`) – open:
+**Group B – drawing and panels** (`muster.rs`, `ansicht2d.rs`, `panele.rs`, `app.rs`) – done:
 
-- [ ] 3 [low] fill triangulation overlaps for self-overlapping outlines (bolero sleeves): build the
-      fill by the even-odd rule in horizontal bands (breaks at vertex heights and edge crossings);
-      test over every piece of every test pattern on a raster against `ansicht2d::innen`
-- [ ] 4 [low] circumference of a piece whose boundary cannot be resolved shown unmarked:
-      `umfang_cm: Option<f64>`, "–" with the reason on hover
-- [ ] 8 [medium] at 800×500 the 2D view shrinks to ~20 px: cap both panels, seam grid scrolls
-      horizontally
-- [ ] 9 [medium] dark mode: selection outline hidden under seam strokes: halo after the fills,
-      lighter selected fill
-- [ ] 15 [low] long status messages cut off: truncate with "…", full text on hover, click reopens
-      the error window
+- [x] 3 [low] fill triangulation overlapped for self-overlapping outlines (bolero sleeves): the fill
+      is built by the even-odd rule in horizontal bands (breaks at vertex heights and edge
+      crossings), `muster::fuellung`; unit test over every piece of every test pattern on a raster
+      against `ansicht2d::innen` (the old ear clipping fails it on the bolero sleeves)
+- [x] 4 [low] circumference of a piece whose boundary cannot be resolved was shown unmarked:
+      `umfang_cm: Option<f64>`, "–" in the error colour with the reason on hover
+- [x] 8 [medium] at 800×500 the 2D view shrank to ~20 px: panels capped (`SEITE_ANTEIL`), lists
+      scroll in both directions; left panel default 460 so the seam grid fits at 1400 px
+- [x] 9 [medium] dark mode: selection outline hidden under seam strokes: 6 px band after the
+      fills and before the seams, lighter selected fill (unit test: contrast ≥ 1.8 against the
+      normal fill; the band itself checked by eye under Xvfb, no test)
+- [x] 15 [low] long status messages cut off: truncated with "…", full text on hover, a click
+      reopens the error window
 
 **Group C – file dialog** (`dateiwahl.rs`) – open:
 

@@ -33,6 +33,9 @@ pub const EINPASS_RAND: f64 = 24.0;
 /// How far one can zoom out and in, relative to the zoom that fits the whole pattern.
 pub const ZOOM_SPANNE: (f64, f64) = (1.0 / 20.0, 1000.0);
 
+/// Width of the band around the selected piece, in screen points; wider than the seam strokes.
+pub const AUSWAHL_BREITE: f32 = 6.0;
+
 /// Longest scale bar in screen points.
 pub const MASSSTAB_MAX_PX: f64 = 160.0;
 
@@ -224,11 +227,12 @@ struct Farben {
 
 impl Farben {
     fn aus(v: &egui::Visuals) -> Farben {
-        let sel = v.selection.bg_fill;
         if v.dark_mode {
             Farben {
                 flaeche: Color32::from_rgba_unmultiplied(80, 120, 170, 70),
-                flaeche_gewaehlt: Color32::from_rgba_unmultiplied(sel.r(), sel.g(), sel.b(), 120),
+                // Clearly lighter than `flaeche` on the dark background (the selection colour
+                // at low alpha mixes to almost the same dark tone).
+                flaeche_gewaehlt: Color32::from_rgba_unmultiplied(90, 160, 220, 150),
                 linie: Color32::from_rgb(150, 180, 215),
                 linie_gewaehlt: Color32::from_rgb(235, 240, 255),
                 naht: Color32::from_rgb(90, 200, 130),
@@ -238,6 +242,7 @@ impl Farben {
                 text: v.strong_text_color(),
             }
         } else {
+            let sel = v.selection.bg_fill;
             Farben {
                 flaeche: Color32::from_rgba_unmultiplied(70, 110, 160, 45),
                 flaeche_gewaehlt: Color32::from_rgba_unmultiplied(sel.r(), sel.g(), sel.b(), 140),
@@ -361,21 +366,28 @@ impl Ansicht2d {
             } else {
                 farben.flaeche
             };
-            let punkte: Vec<Pos2> = t.umriss.iter().map(|&p| bild(p, v)).collect();
             let mut mesh = Mesh::default();
-            for &p in &punkte {
-                mesh.colored_vertex(p, fuell);
+            for &p in &t.fuellung.punkte {
+                mesh.colored_vertex(bild(p, v), fuell);
             }
-            for d in &t.dreiecke {
+            for d in &t.fuellung.dreiecke {
                 mesh.add_triangle(d[0], d[1], d[2]);
             }
             painter.add(Shape::mesh(mesh));
-            let strich = if ist_gewaehlt {
-                Stroke::new(2.0, farben.linie_gewaehlt)
-            } else {
-                Stroke::new(1.0, farben.linie)
-            };
-            painter.add(Shape::closed_line(punkte, strich));
+            let punkte: Vec<Pos2> = t.umriss.iter().map(|&p| bild(p, v)).collect();
+            painter.add(Shape::closed_line(punkte, Stroke::new(1.0, farben.linie)));
+        }
+
+        // The selected piece's outline as a wide band over all fills (pieces overlap in
+        // construction coordinates) but under the seam strokes, so it shows on both sides of
+        // every seam and the seam colours stay readable.
+        if let Some(t) = gewaehlt.and_then(|i| muster.teile.get(i)) {
+            let v = t.versatz(self.ausgelegt);
+            let punkte: Vec<Pos2> = t.umriss.iter().map(|&p| bild(p, v)).collect();
+            painter.add(Shape::closed_line(
+                punkte,
+                Stroke::new(AUSWAHL_BREITE, farben.linie_gewaehlt),
+            ));
         }
 
         // Seam edges.
@@ -467,7 +479,7 @@ impl Ansicht2d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::muster::{dreiecke, etikett};
+    use crate::muster::{etikett, fuellung};
 
     fn pt(x: f64, y: f64) -> Pt {
         Pt::new(x, y)
@@ -483,12 +495,12 @@ mod tests {
             name: format!("Q {x} {y}"),
             kurz: String::new(),
             schluessel: String::new(),
-            dreiecke: dreiecke(&umriss),
+            fuellung: fuellung(&umriss),
             huelle: Huelle::um(&umriss),
             auslage,
             etikett: etikett(&umriss),
             knoten: 4,
-            umfang_cm: 4.0 * s,
+            umfang_cm: None,
             rand: Err("ohne".into()),
             kanten_naehte: Vec::new(),
             umriss,
@@ -602,6 +614,40 @@ mod tests {
         assert!(innen(&u, pt(1.5, 0.5)));
         assert!(!innen(&u, pt(1.5, 2.0)));
         assert!(!innen(&u, pt(-1.0, 1.0)));
+    }
+
+    /// Relative luminance of an sRGB colour (WCAG 2).
+    fn leuchtdichte(c: Color32) -> f64 {
+        let lin = |k: u8| {
+            let k = k as f64 / 255.0;
+            if k <= 0.04045 {
+                k / 12.92
+            } else {
+                ((k + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    #[test]
+    fn gewaehlte_flaeche_hebt_sich_im_dunkeln_ab() {
+        // The fills are drawn over the view background; the selected one must stand out clearly
+        // (it used to mix to almost the same dark tone: contrast 1.07).
+        let v = egui::Visuals::dark();
+        let f = Farben::aus(&v);
+        let grund = v.extreme_bg_color;
+        let auf_grund = |c: Color32| {
+            let [r, g, b, a] = c.to_srgba_unmultiplied();
+            let a = a as f64 / 255.0;
+            let mix = |x: u8, y: u8| (x as f64 * a + y as f64 * (1.0 - a)).round() as u8;
+            Color32::from_rgb(mix(r, grund.r()), mix(g, grund.g()), mix(b, grund.b()))
+        };
+        let (n, s) = (
+            leuchtdichte(auf_grund(f.flaeche)),
+            leuchtdichte(auf_grund(f.flaeche_gewaehlt)),
+        );
+        let kontrast = (s.max(n) + 0.05) / (s.min(n) + 0.05);
+        assert!(kontrast >= 1.8, "Kontrast {kontrast:.2}");
     }
 
     #[test]

@@ -15,7 +15,7 @@ use egui::RichText;
 use klon3d_pattern::naehte::TOLERANZ_CM;
 
 use crate::app::{Aktion, App};
-use crate::muster::{cm4, delta4, naht_auffaellig, naht_vermerk, Muster, Nahtstand};
+use crate::muster::{cm4, delta4, naht_auffaellig, naht_vermerk, Muster, Nahtstand, Teil};
 
 /// Longest Bezeichnung shown in the seam list; the full text is in the hover text.
 const BEZEICHNUNG_MAX: usize = 34;
@@ -62,7 +62,8 @@ pub fn links(app: &mut App, ui: &mut egui::Ui) {
     };
     ui.weak(format!("Maße: {} · {herkunft}", m.massdatei_name()))
         .on_hover_text(m.massdatei.display().to_string());
-    egui::ScrollArea::vertical()
+    // Both directions: the seam grid is wider than a narrow panel and must not widen it.
+    egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             teileliste(app, &m, ui);
@@ -92,7 +93,7 @@ fn teileliste(app: &mut App, m: &Muster, ui: &mut egui::Ui) {
                 if r.clicked() {
                     app.aktion(Aktion::TeilWaehlen(i));
                 }
-                ui.label(cm4(t.umfang_cm));
+                umfang(ui, t, "");
                 ui.label(t.knoten.to_string());
                 ui.end_row();
             }
@@ -235,6 +236,22 @@ fn nahtliste(app: &mut App, m: &Muster, ui: &mut egui::Ui) {
     }
 }
 
+/// The circumference of a piece in cm (followed by `einheit`), or a "–" in the error colour when
+/// its boundary cannot be resolved – a length across a node that cannot be evaluated would be
+/// wrong (`klon3d naehte` prints none either). The reason is in the hover text.
+fn umfang(ui: &mut egui::Ui, t: &Teil, einheit: &str) {
+    match (t.umfang_cm, &t.rand) {
+        (Some(u), _) => {
+            ui.label(format!("{}{einheit}", cm4(u)));
+        }
+        (None, rand) => {
+            let grund = rand.as_ref().err().map_or("", String::as_str);
+            ui.colored_label(ui.visuals().error_fg_color, "–")
+                .on_hover_text(format!("Rand nicht auflösbar: {grund}"));
+        }
+    }
+}
+
 /// Right panel: properties of the selected piece.
 pub fn rechts(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(4.0);
@@ -248,7 +265,7 @@ pub fn rechts(app: &mut App, ui: &mut egui::Ui) {
         ui.weak("Kein Teil gewählt – in der Liste oder in der Ansicht anklicken, Tab wählt das nächste.");
         return;
     };
-    egui::ScrollArea::vertical()
+    egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.strong(&t.kurz);
@@ -259,7 +276,7 @@ pub fn rechts(app: &mut App, ui: &mut egui::Ui) {
                     ui.label(&t.name);
                     ui.end_row();
                     ui.label("Umfang");
-                    ui.label(format!("{} cm", cm4(t.umfang_cm)));
+                    umfang(ui, t, " cm");
                     ui.end_row();
                     ui.label("Knoten");
                     ui.label(t.knoten.to_string());
@@ -352,10 +369,22 @@ pub fn statusleiste(app: &mut App, ui: &mut egui::Ui) {
             ui.label(abw);
         }
         ui.separator();
+        // Messages carry whole paths: cut at the window edge with "…", the full text on hover;
+        // a click shows an error again in the error window.
+        let mut text = RichText::new(&app.meldung);
         if app.meldung_fehler {
-            ui.colored_label(ui.visuals().error_fg_color, &app.meldung);
-        } else {
-            ui.label(&app.meldung);
+            text = text.color(ui.visuals().error_fg_color);
+        }
+        let r = ui.add(
+            egui::Label::new(text)
+                .truncate()
+                .sense(egui::Sense::click()),
+        );
+        if app.meldung_fehler
+            && r.on_hover_text("Klicken zeigt die Meldung im Fehlerfenster")
+                .clicked()
+        {
+            app.aktion(Aktion::FehlerZeigen);
         }
     });
 }

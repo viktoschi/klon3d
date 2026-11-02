@@ -15,6 +15,7 @@ use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_kittest::Harness;
 use klon3d_app::app::{App, SCHLUESSEL_ORDNER, SCHLUESSEL_THEMA};
 use klon3d_app::dateiwahl::Zweck;
+use klon3d_app::muster::Ladeauftrag;
 use klon3d_pattern::geom::{lies_messungen, Auswertung};
 use klon3d_pattern::kanten::Kurvenquelle;
 use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
@@ -780,6 +781,100 @@ fn ohne_muster_sind_musterbefehle_gesperrt() {
         .get_by_role_and_label(Role::Button, "Einpassen")
         .accesskit_node()
         .is_disabled());
+}
+
+#[test]
+fn unaufloesbarer_rand_zeigt_keinen_umfang() {
+    // A measurement file with every second value missing: some boundaries cannot be resolved.
+    let ordner = frischer_ordner("halbe-masse");
+    let text = std::fs::read_to_string(muster_ordner().join("measurements.smis")).unwrap();
+    let mut n = 0;
+    let halb: String = text
+        .lines()
+        .filter(|z| {
+            let wert = z.trim_start().starts_with("<m ");
+            n += wert as usize;
+            !wert || n % 2 == 1
+        })
+        .map(|z| format!("{z}\n"))
+        .collect();
+    let mass = ordner.join("halb.smis");
+    std::fs::write(&mass, halb).unwrap();
+
+    // Independently: which pieces with an outline have a boundary that cannot be resolved.
+    let muster = read_path(&bluse()).unwrap();
+    let ev = Auswertung::new(&muster, lies_messungen(&mass, &muster.unit).unwrap());
+    let (mut ohne, mut mit) = (Vec::new(), Vec::new());
+    for p in muster.pieces() {
+        if !ev.stueck_umriss(p).map(|u| u.len() >= 3).unwrap_or(false) {
+            continue;
+        }
+        let name = p.name.clone().unwrap();
+        match ev.teilrand(p, Kurvenquelle::Seamly) {
+            Ok(r) => mit.push((name, r.in_cm(r.umfang()))),
+            Err(_) => ohne.push(name),
+        }
+    }
+    assert!(!ohne.is_empty(), "kein Teil mit unauflösbarem Rand");
+
+    let mut h = fenster();
+    h.run();
+    let mut auftrag = Ladeauftrag::neu(bluse());
+    auftrag.massdatei = Some(mass.clone());
+    assert!(h.state_mut().laden(auftrag));
+    h.run();
+    // No number where `klon3d naehte` prints none; the others as before.
+    for name in &ohne {
+        assert_eq!(zeile(&h, kurzname(name), 2)[0], "–", "Umfang von {name}");
+    }
+    for (name, umfang) in &mit {
+        let z = zeile(&h, kurzname(name), 2);
+        assert_eq!(z[0], format!("{umfang:.4}"), "Umfang von {name}");
+    }
+    let _ = std::fs::remove_dir_all(&ordner);
+}
+
+/// A window of the minimum size `main.rs` allows.
+fn kleinstes_fenster() -> Harness<'static, App> {
+    Harness::builder()
+        .with_size([800.0, 500.0])
+        .build_eframe(|cc| App::neu(cc))
+}
+
+#[test]
+fn kleinstes_fenster_laesst_der_ansicht_platz() {
+    let mut h = kleinstes_fenster();
+    assert!(h.state_mut().muster_laden(bluse()));
+    h.run();
+    let ansicht = h.get_by_label("2D-Ansicht").rect();
+    assert!(ansicht.width() >= 300.0, "2D-Ansicht nur {ansicht:?}");
+    // The seam list is still there, inside its panel.
+    assert!(h.query_by_label("Nähte").is_some());
+}
+
+#[test]
+fn lange_meldung_gekuerzt_und_wieder_zu_zeigen() {
+    let mut h = kleinstes_fenster();
+    h.run();
+    let weg = muster_ordner()
+        .join("ein_recht_langer_ordnername_der_nicht_in_die_statusleiste_passt")
+        .join("gibt_es_nicht.sm2d");
+    assert!(!h.state_mut().muster_laden(&weg));
+    h.run();
+    let meldung = h.state().meldung.clone();
+    h.get_by_label("Fehler schließen").click();
+    h.run();
+    // Cut at the window edge; the label still carries the whole text.
+    let status = h.get_by_label(&meldung);
+    assert!(
+        status.rect().right() <= 800.0,
+        "Meldung reicht bis {}",
+        status.rect().right()
+    );
+    // A click shows it in the error window again.
+    status.click();
+    h.run();
+    assert_eq!(h.state().fehlerfenster.as_deref(), Some(meldung.as_str()));
 }
 
 /// All `.sm2d` below `ordner`.

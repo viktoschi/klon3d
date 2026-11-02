@@ -54,6 +54,12 @@ pub const KUERZEL_BEENDEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::C
 /// How many frame intervals the frame rate is averaged over.
 const BILDZEITEN: usize = 60;
 
+/// Widest share of the window the left (pieces and seams) and the right (properties) panel may
+/// take: together they leave the 2D view at least 40 % of the width, also at the minimum window
+/// size. Wider content scrolls inside the panel. At the default size (1400) the left panel shows
+/// the whole seam grid.
+pub const SEITE_ANTEIL: (f32, f32) = (0.36, 0.24);
+
 /// A command, from a menu, a button, a key or a click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Aktion {
@@ -74,6 +80,8 @@ pub enum Aktion {
     TeilWaehlen(usize),
     NahtWaehlen(usize),
     NahtlaengenZeigen,
+    /// Show the last error message in the error window again.
+    FehlerZeigen,
     TastenkuerzelZeigen,
     UeberZeigen,
 }
@@ -410,6 +418,10 @@ impl App {
                 };
             }
             Aktion::NahtlaengenZeigen => self.nahtliste_zeigen = true,
+            Aktion::FehlerZeigen if self.meldung_fehler => {
+                self.fehlerfenster = Some(self.meldung.clone());
+            }
+            Aktion::FehlerZeigen => {}
             Aktion::TastenkuerzelZeigen => self.hilfe = Some(Hilfe::Tastenkuerzel),
             Aktion::UeberZeigen => self.hilfe = Some(Hilfe::Ueber),
         }
@@ -664,13 +676,15 @@ impl eframe::App for App {
         });
         egui::Panel::top("werkzeugleiste").show(ui, |ui| crate::menue::werkzeugleiste(self, ui));
         egui::Panel::bottom("statusleiste").show(ui, |ui| crate::panele::statusleiste(self, ui));
+        let breite = ui.available_width();
+        let (links_max, rechts_max) = (breite * SEITE_ANTEIL.0, breite * SEITE_ANTEIL.1);
         egui::Panel::left("teile_und_naehte")
-            .default_size(380.0)
-            .min_size(220.0)
+            .default_size(460.0)
+            .size_range(220.0f32.min(links_max)..=links_max)
             .show(ui, |ui| crate::panele::links(self, ui));
         egui::Panel::right("eigenschaften")
             .default_size(320.0)
-            .min_size(200.0)
+            .size_range(180.0f32.min(rechts_max)..=rechts_max)
             .show(ui, |ui| crate::panele::rechts(self, ui));
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let klick =

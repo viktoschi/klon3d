@@ -1,8 +1,8 @@
 //! A loaded pattern as plain data – no egui types, so everything here is unit-tested.
 //!
 //! [`Muster::laden`] reads a Seamly2D pattern (`.sm2d`) with its measurement file, evaluates it once
-//! and keeps only owned results: piece outlines in construction coordinates (pattern units), a
-//! triangulation for the filled drawing, the layout offsets, the boundary edges
+//! and keeps only owned results: piece outlines in construction coordinates (pattern units), the
+//! fill as triangles ([`fuellung`]), the layout offsets, the boundary edges
 //! ([`Teilrand`]) and the seam report ([`Nahtbericht`]). The [`Auswertung`] borrows the pattern and
 //! is dropped when loading ends.
 //!
@@ -19,7 +19,8 @@
 //! [`Muster::in_cm`] (the factor of [`Auswertung::mm_pro_einheit`], as [`Teilrand::in_cm`]). Seams are
 //! checked by [`pruefe_naehte`] with [`Kurvenquelle::Seamly`] – the numbers of `klon3d naehte`. A
 //! piece's circumference is [`Teilrand::umfang`] (also Seamly's decomposition), so the edges listed for
-//! a piece add up to it; a piece whose boundary cannot be resolved falls back to the drawn outline.
+//! a piece add up to it. A piece whose boundary cannot be resolved has none (`None`): a length across
+//! a node that cannot be evaluated would be wrong, and `klon3d naehte` prints none either.
 //!
 //! ## Layout
 //!
@@ -114,8 +115,8 @@ pub struct Teil {
     pub schluessel: String,
     /// Seam line in construction coordinates, open (last point ≠ first point).
     pub umriss: Vec<Pt>,
-    /// Triangles over `umriss` for the filled drawing ([`dreiecke`]).
-    pub dreiecke: Vec<[u32; 3]>,
+    /// The inside of `umriss` as triangles for the filled drawing ([`fuellung`]).
+    pub fuellung: Fuellung,
     /// Bounding box in construction coordinates.
     pub huelle: Huelle,
     /// Offset in the layout, pattern units.
@@ -124,8 +125,8 @@ pub struct Teil {
     pub etikett: Pt,
     /// Number of nodes of the piece in the pattern file.
     pub knoten: usize,
-    /// Circumference in cm (see the module docs).
-    pub umfang_cm: f64,
+    /// Circumference in cm; `None` when the boundary cannot be resolved (see the module docs).
+    pub umfang_cm: Option<f64>,
     /// Boundary edges, or why the boundary cannot be resolved.
     pub rand: Result<Teilrand, String>,
     /// For every boundary edge the seams (indices into [`Nahtbericht::naehte`]) that use it.
@@ -416,20 +417,13 @@ fn laden_ungeschuetzt(auftrag: &Ladeauftrag) -> Result<Muster, Ladefehler> {
         let rand = ev
             .teilrand(p, Kurvenquelle::Seamly)
             .map_err(|e| e.to_string());
-        let umfang_cm = match &rand {
-            Ok(r) => r.in_cm(r.umfang()),
-            Err(_) => {
-                let mut ring = umriss.clone();
-                ring.push(umriss[0]);
-                ev.umriss_laenge(&ring) * ev.mm_pro_einheit() / 10.0
-            }
-        };
+        let umfang_cm = rand.as_ref().ok().map(|r| r.in_cm(r.umfang()));
         let kanten = rand.as_ref().map(|r| r.kanten.len()).unwrap_or(0);
         teile.push(Teil {
             schluessel: p.name.clone().unwrap_or_else(|| p.id.clone()),
             name,
             kurz: String::new(),
-            dreiecke: dreiecke(&umriss),
+            fuellung: fuellung(&umriss),
             huelle: Huelle::um(&umriss),
             auslage: Pt::new(0.0, 0.0),
             etikett: etikett(&umriss),
@@ -588,73 +582,122 @@ pub fn flaeche(punkte: &[Pt]) -> f64 {
         / 2.0
 }
 
-/// Triangulate a simple ring by ear clipping; indices into `punkte`.
+/// A filled area as triangles; `dreiecke` index into `punkte`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Fuellung {
+    pub punkte: Vec<Pt>,
+    pub dreiecke: Vec<[u32; 3]>,
+}
+
+impl Fuellung {
+    /// The sum of the triangle areas.
+    pub fn flaeche(&self) -> f64 {
+        self.dreiecke
+            .iter()
+            .map(|d| {
+                let [a, b, c] = d.map(|i| self.punkte[i as usize]);
+                flaeche(&[a, b, c]).abs()
+            })
+            .sum()
+    }
+}
+
+/// The inside of a ring by the even-odd rule – the rule of the hit test
+/// [`crate::ansicht2d::innen`] – as triangles that do not overlap.
 ///
-/// egui only fills convex paths, and pattern pieces are rarely convex. For a simple polygon the
-/// triangles cover it exactly. A degenerate or self-intersecting ring still terminates: when no ear
-/// is left, a vertex is dropped, so part of the fill may be missing – the outline is drawn
-/// separately anyway.
-pub fn dreiecke(punkte: &[Pt]) -> Vec<[u32; 3]> {
-    let n = punkte.len();
+/// egui only fills convex paths, and pattern pieces are rarely convex; some outlines also run back
+/// along a curve they already traced, or cross themselves. The ring is cut into horizontal bands
+/// at every vertex height and at every height where two edges cross. Inside a band no two edges
+/// cross, so the edges spanning it, sorted by x, pair up – first with second, third with fourth –
+/// into trapezoids of the inside. Bands and trapezoids are disjoint, so the semi-transparent fill
+/// is never painted twice. O(n²) in the number of points, once at load time.
+pub fn fuellung(ring: &[Pt]) -> Fuellung {
+    let mut out = Fuellung::default();
+    let n = ring.len();
     if n < 3 {
-        return Vec::new();
+        return out;
     }
-    let richtung = flaeche(punkte).signum();
-    if richtung == 0.0 {
-        return Vec::new();
-    }
-    let kreuz =
-        |a: Pt, b: Pt, c: Pt| ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)) * richtung;
-    let mut rest: Vec<usize> = (0..n).collect();
-    let mut out = Vec::with_capacity(n - 2);
-    let mut i = 0;
-    let mut vergeblich = 0;
-    while rest.len() > 3 {
-        let m = rest.len();
-        let (ia, ib, ic) = (rest[(i + m - 1) % m], rest[i], rest[(i + 1) % m]);
-        let (a, b, c) = (punkte[ia], punkte[ib], punkte[ic]);
-        let konvex = kreuz(a, b, c) > 0.0;
-        let ohr = konvex
-            && rest.iter().all(|&j| {
-                let p = punkte[j];
-                j == ia
-                    || j == ib
-                    || j == ic
-                    || p == a
-                    || p == b
-                    || p == c
-                    || !im_dreieck(p, a, b, c)
-            });
-        if ohr || vergeblich > m {
-            // Without an ear in a whole round the ring is degenerate: clip anyway (a convex
-            // vertex gives a triangle, a reflex one is dropped) so the loop ends.
-            if konvex {
-                out.push([ia as u32, ib as u32, ic as u32]);
+    // Horizontal edges span no band.
+    let kanten: Vec<(Pt, Pt)> = (0..n)
+        .map(|i| (ring[i], ring[(i + 1) % n]))
+        .filter(|(a, b)| a.y != b.y)
+        .collect();
+    let mut hoehen: Vec<f64> = ring.iter().map(|p| p.y).collect();
+    for i in 0..kanten.len() {
+        for j in i + 1..kanten.len() {
+            if let Some(y) = kreuzungshoehe(kanten[i], kanten[j]) {
+                hoehen.push(y);
             }
-            rest.remove(i);
-            if i >= rest.len() {
-                i = 0;
-            }
-            vergeblich = 0;
-        } else {
-            i = (i + 1) % m;
-            vergeblich += 1;
         }
     }
-    let (a, b, c) = (punkte[rest[0]], punkte[rest[1]], punkte[rest[2]]);
-    if kreuz(a, b, c) > 0.0 {
-        out.push([rest[0] as u32, rest[1] as u32, rest[2] as u32]);
+    hoehen.sort_by(f64::total_cmp);
+    hoehen.dedup();
+    let mut im_band: Vec<(f64, (Pt, Pt))> = Vec::new();
+    for band in hoehen.windows(2) {
+        let (y0, y1) = (band[0], band[1]);
+        let mitte = 0.5 * (y0 + y1);
+        im_band.clear();
+        im_band.extend(
+            kanten
+                .iter()
+                .filter(|(a, b)| a.y.min(b.y) <= y0 && a.y.max(b.y) >= y1)
+                .map(|&k| (x_bei(k, mitte), k)),
+        );
+        im_band.sort_by(|p, q| p.0.total_cmp(&q.0));
+        for paar in im_band.chunks_exact(2) {
+            let (l, r) = (paar[0].1, paar[1].1);
+            let (l0, r0, l1, r1) = (x_bei(l, y0), x_bei(r, y0), x_bei(l, y1), x_bei(r, y1));
+            // A width at or below zero is a corner (or rounding at a crossing): no triangle.
+            let (unten, oben) = (r0 > l0, r1 > l1);
+            if !unten && !oben {
+                continue;
+            }
+            let i = out.punkte.len() as u32;
+            out.punkte.extend([
+                Pt::new(l0, y0),
+                Pt::new(r0, y0),
+                Pt::new(r1, y1),
+                Pt::new(l1, y1),
+            ]);
+            if unten {
+                out.dreiecke.push([i, i + 1, i + 2]);
+            }
+            if oben {
+                out.dreiecke.push([i, i + 2, i + 3]);
+            }
+        }
     }
     out
 }
 
-/// Is `p` inside triangle `a b c` or on its edges (either orientation)?
-fn im_dreieck(p: Pt, a: Pt, b: Pt, c: Pt) -> bool {
-    let s = |u: Pt, v: Pt| (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
-    let (d1, d2, d3) = (s(a, b), s(b, c), s(c, a));
-    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-    !(neg && pos)
+/// x of the edge `a b` at height `y`; exact at the end points.
+fn x_bei((a, b): (Pt, Pt), y: f64) -> f64 {
+    if y == a.y {
+        a.x
+    } else if y == b.y {
+        b.x
+    } else {
+        a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y)
+    }
+}
+
+/// The height at which two edges cross inside both (not at an end point), if they do.
+fn kreuzungshoehe((a, b): (Pt, Pt), (c, d): (Pt, Pt)) -> Option<f64> {
+    let getrennt = |p: f64, q: f64, u: f64, v: f64| p.max(q) < u.min(v) || u.max(v) < p.min(q);
+    if getrennt(a.y, b.y, c.y, d.y) || getrennt(a.x, b.x, c.x, d.x) {
+        return None;
+    }
+    let (rx, ry) = (b.x - a.x, b.y - a.y);
+    let (sx, sy) = (d.x - c.x, d.y - c.y);
+    let nenner = rx * sy - ry * sx;
+    if nenner == 0.0 {
+        // Parallel: no single crossing; collinear overlaps change no order.
+        return None;
+    }
+    let (qx, qy) = (c.x - a.x, c.y - a.y);
+    let t = (qx * sy - qy * sx) / nenner;
+    let u = (qx * ry - qy * rx) / nenner;
+    (t > 0.0 && t < 1.0 && u > 0.0 && u < 1.0).then(|| a.y + t * ry)
 }
 
 /// Lay pieces out in rows; the result is the offset per piece.
@@ -777,10 +820,91 @@ mod tests {
         Pt::new(x, y)
     }
 
-    fn dreiecksflaeche(p: &[Pt], d: &[[u32; 3]]) -> f64 {
-        d.iter()
-            .map(|t| flaeche(&[p[t[0] as usize], p[t[1] as usize], p[t[2] as usize]]).abs())
-            .sum()
+    /// Smallest signed distance of `p` to the edges of triangle `t`, positive inside (either
+    /// orientation); `None` for a degenerate triangle.
+    fn innenabstand(p: Pt, t: &[Pt; 3]) -> Option<f64> {
+        let f2 = (t[1].x - t[0].x) * (t[2].y - t[0].y) - (t[1].y - t[0].y) * (t[2].x - t[0].x);
+        if f2 == 0.0 {
+            return None;
+        }
+        let mut m = f64::INFINITY;
+        for i in 0..3 {
+            let (a, b) = (t[i], t[(i + 1) % 3]);
+            let l = a.dist(b);
+            if l == 0.0 {
+                return None;
+            }
+            let kreuz = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+            m = m.min(kreuz * f2.signum() / l);
+        }
+        Some(m)
+    }
+
+    /// Raster check of a fill against the even-odd rule of the hit test
+    /// (`ansicht2d::innen`, independent code): on a grid over the ring's box no point lies
+    /// strictly inside two triangles, every point inside the ring lies in a triangle and no
+    /// point outside lies strictly inside one. The grid is offset by irrational fractions, so its
+    /// points do not fall on vertex heights.
+    fn pruefe_fuellung(ring: &[Pt], f: &Fuellung, was: &str) {
+        const N: usize = 64;
+        let h = Huelle::um(ring);
+        let (bw, bh) = (h.breite().max(1e-9), h.hoehe().max(1e-9));
+        let eps = 1e-9 * bw.max(bh);
+        let punkt = |ix: usize, iy: usize| {
+            pt(
+                h.x0 + (ix as f64 + 0.618_033_988_7) * bw / N as f64,
+                h.y0 + (iy as f64 + 0.414_213_562_3) * bh / N as f64,
+            )
+        };
+        let (mut streng, mut locker) = (vec![0u32; N * N], vec![0u32; N * N]);
+        for d in &f.dreiecke {
+            let t = d.map(|i| f.punkte[i as usize]);
+            let th = Huelle::um(&t);
+            // Grid indices whose points can lie in the triangle's box.
+            let von = |w: f64, w0: f64, b: f64| {
+                (((w - w0) / b * N as f64 - 1.0).floor().max(0.0) as usize).min(N)
+            };
+            let bis = |w: f64, w0: f64, b: f64| {
+                (((w - w0) / b * N as f64 + 1.0).ceil().max(0.0) as usize).min(N)
+            };
+            for iy in von(th.y0, h.y0, bh)..bis(th.y1, h.y0, bh) {
+                for ix in von(th.x0, h.x0, bw)..bis(th.x1, h.x0, bw) {
+                    if let Some(m) = innenabstand(punkt(ix, iy), &t) {
+                        streng[iy * N + ix] += (m > eps) as u32;
+                        locker[iy * N + ix] += (m > -eps) as u32;
+                    }
+                }
+            }
+        }
+        for iy in 0..N {
+            for ix in 0..N {
+                let p = punkt(ix, iy);
+                let (s, l) = (streng[iy * N + ix], locker[iy * N + ix]);
+                assert!(s <= 1, "{was}: {p:?} {s}-fach gefüllt");
+                if crate::ansicht2d::innen(ring, p) {
+                    assert!(l >= 1, "{was}: {p:?} innen, aber nicht gefüllt");
+                } else {
+                    assert_eq!(s, 0, "{was}: {p:?} außen, aber gefüllt");
+                }
+            }
+        }
+    }
+
+    /// All `.sm2d` below `ordner`.
+    fn alle_muster(ordner: &Path, out: &mut Vec<PathBuf>) {
+        let mut e: Vec<PathBuf> = std::fs::read_dir(ordner)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        e.sort();
+        for p in e {
+            if p.is_dir() {
+                alle_muster(&p, out);
+            } else if p.extension().is_some_and(|x| x == "sm2d") {
+                out.push(p);
+            }
+        }
     }
 
     #[test]
@@ -807,7 +931,7 @@ mod tests {
         for t in &m.teile {
             assert!(!t.kurz.starts_with("Bluse 3 - "), "{}", t.kurz);
             let r = t.rand.as_ref().expect("Rand auflösbar");
-            assert!((t.umfang_cm - r.in_cm(r.umfang())).abs() < 1e-12);
+            assert_eq!(t.umfang_cm, Some(r.in_cm(r.umfang())));
             assert_eq!(t.kanten_naehte.len(), r.kanten.len());
         }
     }
@@ -932,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn dreiecke_decken_ein_l() {
+    fn fuellung_deckt_ein_l() {
         // L shape, clockwise in y-down drawing coordinates, area 3.
         let l = [
             pt(0.0, 0.0),
@@ -942,17 +1066,17 @@ mod tests {
             pt(1.0, 2.0),
             pt(0.0, 2.0),
         ];
-        let d = dreiecke(&l);
-        assert_eq!(d.len(), 4);
-        assert!((dreiecksflaeche(&l, &d) - 3.0).abs() < 1e-12);
+        let f = fuellung(&l);
+        assert!((f.flaeche() - 3.0).abs() < 1e-12, "{}", f.flaeche());
+        pruefe_fuellung(&l, &f, "L");
         // Reverse orientation gives the same area.
         let mut r = l.to_vec();
         r.reverse();
-        assert!((dreiecksflaeche(&r, &dreiecke(&r)) - 3.0).abs() < 1e-12);
+        assert!((fuellung(&r).flaeche() - 3.0).abs() < 1e-12);
     }
 
     #[test]
-    fn dreiecke_kamm_und_entartetes() {
+    fn fuellung_kamm_und_entartetes() {
         // A comb with three teeth: strongly concave.
         let kamm = [
             pt(0.0, 0.0),
@@ -968,22 +1092,81 @@ mod tests {
             pt(1.0, 3.0),
             pt(0.0, 3.0),
         ];
-        let soll = flaeche(&kamm).abs();
-        assert!((dreiecksflaeche(&kamm, &dreiecke(&kamm)) - soll).abs() < 1e-9);
-        // Collinear points and too few points: no triangles, no hang.
-        assert!(dreiecke(&[pt(0.0, 0.0), pt(1.0, 0.0), pt(2.0, 0.0)]).is_empty());
-        assert!(dreiecke(&[pt(0.0, 0.0), pt(1.0, 0.0)]).is_empty());
-        // A figure eight terminates.
-        let acht = [pt(0.0, 0.0), pt(2.0, 2.0), pt(2.0, 0.0), pt(0.0, 2.0)];
-        let _ = dreiecke(&acht);
+        let f = fuellung(&kamm);
+        assert!((f.flaeche() - flaeche(&kamm).abs()).abs() < 1e-9);
+        pruefe_fuellung(&kamm, &f, "Kamm");
+        // Collinear points and too few points: no area.
+        assert_eq!(
+            fuellung(&[pt(0.0, 0.0), pt(1.0, 0.0), pt(2.0, 0.0)]).flaeche(),
+            0.0
+        );
+        assert!(fuellung(&[pt(0.0, 0.0), pt(1.0, 0.0)]).dreiecke.is_empty());
     }
 
     #[test]
-    fn dreiecke_decken_die_teile_der_bluse() {
+    fn fuellung_bei_selbstueberschneidung_nach_gerade_ungerade() {
+        // A figure eight: two triangles of area 1 each (the shoelace formula gives 0).
+        let acht = [pt(0.0, 0.0), pt(2.0, 2.0), pt(2.0, 0.0), pt(0.0, 2.0)];
+        let f = fuellung(&acht);
+        assert!((f.flaeche() - 2.0).abs() < 1e-12, "{}", f.flaeche());
+        pruefe_fuellung(&acht, &f, "Acht");
+        // A pentagram: the five points are inside, the pentagon in the middle is not.
+        let stern: Vec<Pt> = (0..5)
+            .map(|i| {
+                let w = std::f64::consts::TAU * (2 * i) as f64 / 5.0;
+                pt(10.0 * w.sin(), -10.0 * w.cos())
+            })
+            .collect();
+        pruefe_fuellung(&stern, &fuellung(&stern), "Pentagramm");
+        // An outline that runs back along a curve it traced: a spike out of a square and back
+        // over the same points, then a second lap over part of the square.
+        let zurueck = [
+            pt(0.0, 0.0),
+            pt(4.0, 0.0),
+            pt(4.0, 4.0),
+            pt(2.0, 4.0),
+            pt(2.0, 6.0),
+            pt(2.5, 7.0),
+            pt(2.0, 6.0),
+            pt(2.0, 4.0),
+            pt(0.0, 4.0),
+            pt(0.0, 0.0),
+            pt(4.0, 0.0),
+            pt(4.0, 2.0),
+            pt(0.0, 2.0),
+        ];
+        pruefe_fuellung(&zurueck, &fuellung(&zurueck), "zurückgelaufen");
+    }
+
+    #[test]
+    fn fuellung_jedes_teils_jedes_pruefmusters() {
+        // Every piece of every test pattern, among them the bolero sleeves, whose outline runs
+        // back along a curve it already traced.
+        let mut muster = Vec::new();
+        alle_muster(&muster_ordner(), &mut muster);
+        assert!(muster.len() >= 10, "{} Muster", muster.len());
+        let mut teile = 0;
+        for p in &muster {
+            let m = Muster::laden(&Ladeauftrag::neu(p)).unwrap();
+            for t in &m.teile {
+                pruefe_fuellung(
+                    &t.umriss,
+                    &t.fuellung,
+                    &format!("{}: {}", p.display(), t.name),
+                );
+                teile += 1;
+            }
+        }
+        assert!(teile > 100, "{teile} Teile");
+    }
+
+    #[test]
+    fn fuellung_der_bluse_hat_die_flaeche_der_teile() {
+        // The Bluse3 outlines are simple: the fill has exactly their area.
         let m = Muster::laden(&Ladeauftrag::neu(bluse())).unwrap();
         for t in &m.teile {
             let soll = flaeche(&t.umriss).abs();
-            let ist = dreiecksflaeche(&t.umriss, &t.dreiecke);
+            let ist = t.fuellung.flaeche();
             assert!(
                 (ist - soll).abs() <= 1e-6 * soll,
                 "{}: {ist} statt {soll}",
