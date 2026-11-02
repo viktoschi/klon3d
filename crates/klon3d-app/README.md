@@ -9,13 +9,23 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** step 7 (review) in progress. A review of the whole crate found 25 defects (numbered
-below as in the review); they are fixed in this order, one commit per group, each commit builds and
-`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **groups A (loading),
-B (drawing and panels), C (file dialog) and D (Windows build, CI, manifest)**. Next: group E below,
-then tick step 7; after that steps 8–11.
+**2026-11-01:** steps 1–7 done. Step 7 (review of the whole crate) found 25 defects; all are fixed
+in five commits (groups A–E below, each builds and keeps `cargo +1.99 test --locked -p klon3d-app`
+green): 30 unit tests + 18 UI tests, no compiler warnings, Windows cross check
+(`cargo +1.99 check --locked -p klon3d-app --all-targets --target x86_64-pc-windows-msvc`) clean.
 
-Steps 1–6 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
+**Next – steps 8–11:**
+
+* 8: the Windows CI job already builds and tests the crate (finding 16, `.github/workflows/ci.yml`);
+  what remains is to see it pass on the first CI run of the PR – the Windows-only test code
+  (`attrib +h`, `SystemDrive`, drive letters) has never run. If it fails there, fix it before
+  anything else. Repeat the cross check above if `src/` changed.
+* 9: screenshots dark/light with the blouse (environment below; `xdotool` clicks need separate
+  `mousedown`/`mouseup` with pauses, keys do not reach the window without a window manager).
+* 10: full workspace build and test (`--exclude klon3d-view`).
+* 11: rebase, push, PR with the template, `Closes #34`, label `review`.
+
+Steps 1–7 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
 lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `größte Abweichung N07L
 Δ -0.0737 cm` as `klon3d naehte` prints). Files:
@@ -55,8 +65,11 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   measurement file loads after choosing one (menu and error window), relative paths stored
   absolute, "–" instead of a circumference where `klon3d naehte` prints none (measurement file with
   half the values), at 800×500 the 2D view keeps ≥ 300 px, a long status message stays inside the
-  window and reopens the error window, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster` are
-  loaded (see finding 20 for what that test asserts).
+  window and reopens the error window, missing files give messages, every disabled menu entry
+  shows the hover text "folgt in einer späteren Aufgabe", all 10 `.sm2d` below
+  `klon3d-pattern/tests/muster` load and their largest seam deviation equals an independent
+  `pruefe_naehte` with the measurement file the pattern names ("keine Nahtliste" for the four
+  without a list).
 
 `Cargo.lock` change for the kittest `eframe` feature: one dependency edge (`egui_kittest` → `eframe`).
 
@@ -123,14 +136,20 @@ the Windows CI job (finding 16) is the first place that runs it.
       "klon3d-app requires rustc 1.99"); the workspace's own `rust-version = "1.85"` is outside this
       task's scope and still too low
 
-**Group E – test honesty** (`tests/oberflaeche.rs`, `muster.rs` tests) – open:
+**Group E – test honesty** (`tests/oberflaeche.rs`, `muster.rs` tests) – done:
 
-- [ ] 20 [medium] `jedes_pruefmuster_laedt_oder_meldet` accepts any outcome: assert every pattern
-      loads and its largest deviation equals an independent `pruefe_naehte`
-- [ ] 21 [low] precondition "Randkanten (22)" can never fail
-- [ ] 22 [low] "clicking disabled Start changes nothing" can never fail: check the hover text instead
-- [ ] 23 [low] drop test does not check why a file is refused
-- [ ] 24 [low] `etikett_liegt_im_bogen` asserts only "not in the gap", not "inside the piece"
+- [x] 20 [medium] `jedes_pruefmuster_laedt_oder_meldet` accepted any outcome: now
+      `jedes_pruefmuster_laedt_wie_klon3d_naehte` asserts that every pattern loads and that the
+      status bar's largest deviation equals `pruefe_naehte` + `groesste_abweichung` computed
+      independently (the calls of `klon3d naehte`), or "keine Nahtliste"; no `eprintln!` left
+- [x] 21 [low] precondition "Randkanten (22)" could never fail: now "nothing selected", the
+      "Kein Teil gewählt" text and no "Randkanten (<real count>)" before the click
+- [x] 22 [low] "clicking disabled Start changes nothing" could never fail: replaced by hovering
+      every disabled entry and finding the tooltip "folgt in einer späteren Aufgabe" (checked: the
+      test fails without the hover text)
+- [x] 23 [low] drop test now asserts the refusal text and that the pattern shown is unchanged
+- [x] 24 [low] `etikett_liegt_im_bogen` asserts the label lies in the U (by coordinates and by
+      `ansicht2d::innen`); the all-patterns unit test also checks every piece's label
 
 Notes: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
 `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is deprecated in 0.37
@@ -188,9 +207,11 @@ seam deviation, last message.
 - [x] 4. `dateiwahl.rs`
 - [x] 5. `app.rs` + `main.rs`: menus, toolbar, panels, status bar, shortcuts, theme with persistence
 - [x] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
-- [ ] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
+- [x] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
+      (25 findings, list above)
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`
+      – both done during step 7 (build **and** test in the job); open: the job passing on CI
 - [ ] 9. Screenshots dark/light with the blouse loaded (environment below), attach to the PR
 - [ ] 10. Full workspace check: `cargo build --locked --workspace --exclude klon3d-view --all-targets` and
       `cargo test --locked --workspace --exclude klon3d-view`
@@ -213,6 +234,12 @@ apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers
 apt-get install -y --no-install-recommends libxkbcommon-x11-0
 xvfb-run -s "-screen 0 1600x1000x24" sh -c 'target/debug/klon3d-app crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d & sleep 8; import -window root bild.png'
 ```
+
+Disk: `target/` grows to ~17 GB with all test binaries, and throwaway probe crates in the scratch
+folders add more; on 2026-11-01 the container's disk was full (263 MB free) and builds failed with
+"No space left on device". Check `df -h /` first; deleting old `target/` artifacts of throwaway
+crates is safe. A Windows cross check needs about 300 MB in `target/x86_64-pc-windows-msvc`
+(`rustup +1.99 target add x86_64-pc-windows-msvc` if missing).
 
 **Main machine (Windows):** cargo path as in AGENTS.md; `cargo run --locked -p klon3d-app -- <muster.sm2d>`.
 

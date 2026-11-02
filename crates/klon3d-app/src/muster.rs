@@ -1149,10 +1149,13 @@ mod tests {
         for p in &muster {
             let m = Muster::laden(&Ladeauftrag::neu(p)).unwrap();
             for t in &m.teile {
-                pruefe_fuellung(
-                    &t.umriss,
-                    &t.fuellung,
-                    &format!("{}: {}", p.display(), t.name),
+                let was = format!("{}: {}", p.display(), t.name);
+                pruefe_fuellung(&t.umriss, &t.fuellung, &was);
+                // The label (and the click of the UI test) lies inside the piece.
+                assert!(
+                    crate::ansicht2d::innen(&t.umriss, t.etikett),
+                    "{was}: Etikett {:?}",
+                    t.etikett
                 );
                 teile += 1;
             }
@@ -1248,7 +1251,12 @@ mod tests {
             pt(0.0, 3.0),
         ];
         let e = etikett(&u);
-        let im_spalt = e.x > 1.0 && e.x < 2.0 && e.y > 1.0;
-        assert!(!im_spalt, "{e:?}");
+        // Inside one of the two legs or the bottom bar – checked without app code …
+        let im_bein =
+            ((e.x > 0.0 && e.x < 1.0) || (e.x > 2.0 && e.x < 3.0)) && e.y > 0.0 && e.y < 3.0;
+        let im_steg = e.x > 0.0 && e.x < 3.0 && e.y > 0.0 && e.y < 1.0;
+        assert!(im_bein || im_steg, "{e:?}");
+        // … and with the hit test.
+        assert!(crate::ansicht2d::innen(&u, e), "{e:?}");
     }
 }

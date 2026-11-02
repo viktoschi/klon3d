@@ -13,7 +13,7 @@ use eframe::egui;
 use egui::{Key, Modifiers, Role, Theme};
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_kittest::Harness;
-use klon3d_app::app::{App, SCHLUESSEL_ORDNER, SCHLUESSEL_THEMA};
+use klon3d_app::app::{App, SCHLUESSEL_ORDNER, SCHLUESSEL_THEMA, SPAETER};
 use klon3d_app::dateiwahl::Zweck;
 use klon3d_app::muster::Ladeauftrag;
 use klon3d_pattern::geom::{lies_messungen, Auswertung};
@@ -182,13 +182,18 @@ fn nahtliste_zeigt_jede_naht_wie_klon3d_naehte() {
 fn klick_in_der_liste_fuellt_die_eigenschaften() {
     let mut h = mit_bluse();
     let soll = soll_bluse();
-    assert!(h.query_by_label("Randkanten (22)").is_none());
     let (i, (name, umfang, kanten)) = soll
         .teile
         .iter()
         .enumerate()
         .find(|(_, t)| t.0.ends_with(" - Band Mitte"))
         .unwrap();
+    // Nothing is selected after loading: the panel asks for a choice and shows no edges.
+    assert_eq!(h.state().gewaehlt, None);
+    assert!(h.query_by_label_contains("Kein Teil gewählt").is_some());
+    assert!(h
+        .query_by_label(&format!("Randkanten ({})", kanten.len()))
+        .is_none());
     h.get_by_role_and_label(Role::Button, "Band Mitte").click();
     h.run();
     assert_eq!(h.state().gewaehlt, Some(i));
@@ -291,6 +296,9 @@ fn design_umschalten_und_behalten() {
 #[test]
 fn menues_und_gesperrte_eintraege() {
     let mut h = mit_bluse();
+    // Tooltips at once, so hovering an entry shows its hover text in the next frame.
+    h.ctx
+        .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
     let menues: [(&str, &[&str], &[&str]); 5] = [
         (
             "Datei",
@@ -344,6 +352,16 @@ fn menues_und_gesperrte_eintraege() {
                     "{menue} › {e} nicht gesperrt"
                 );
             }
+            // Hovering a disabled entry says why.
+            h.get_all_by_role_and_label(Role::Button, e)
+                .next()
+                .unwrap()
+                .hover();
+            h.run();
+            let hinweis = h
+                .query_all_by_role(Role::Tooltip)
+                .any(|t| t.query_by_label(SPAETER).is_some());
+            assert!(hinweis, "{menue} › {e}: kein Hinweis „{SPAETER}“");
         }
         // Close the menu again.
         h.get_by_label(menue).click();
@@ -357,30 +375,7 @@ fn menues_und_gesperrte_eintraege() {
         }
     }
 
-    // A disabled entry cannot be activated: clicking "Start" changes nothing.
-    let vorher = (
-        h.state().meldung.clone(),
-        h.state().gewaehlt,
-        h.state().ansicht.ausgelegt,
-    );
-    h.get_by_label("Simulation").click();
-    h.run();
-    h.get_by_label("Start").click();
-    h.run();
-    // (egui closes the menu on any click inside it; that is all that happens.)
-    let nachher = (
-        h.state().meldung.clone(),
-        h.state().gewaehlt,
-        h.state().ansicht.ausgelegt,
-    );
-    assert_eq!(vorher, nachher);
-    assert!(h.state().dateiwahl.is_none() && h.state().hilfe.is_none());
-
     // An enabled entry acts: Hilfe › Tastenkürzel opens the help window.
-    if h.query_by_label("Start").is_some() {
-        h.get_by_label("Simulation").click();
-        h.run();
-    }
     h.get_by_label("Hilfe").click();
     h.run();
     h.get_by_label("Tastenkürzel").click();
@@ -547,13 +542,28 @@ fn muster_ablegen_oeffnet_es() {
         .push(Arc::new(Abgelegt(bluse())));
     h.run();
     assert_eq!(h.state().muster.as_ref().map(|m| m.teile.len()), Some(28));
-    // A file of another kind is refused with a message.
+    // A file of another kind is refused for its kind – not handed to a loader that fails on
+    // it – and the pattern shown stays.
+    let vorher = h
+        .state()
+        .muster
+        .as_ref()
+        .map(|m| (m.pfad.clone(), m.teile.len()));
     h.input_mut()
         .dropped_files
         .push(Arc::new(Abgelegt(muster_ordner().join("mod.rs"))));
     h.run();
-    assert!(h.state().fehlerfenster.is_some());
-    assert!(h.state().muster.is_some());
+    let f = h.state().fehlerfenster.clone().expect("Fehlerfenster");
+    assert!(
+        f.contains("mod.rs: kein Muster (.sm2d), keine Maßdatei (.smis)"),
+        "{f}"
+    );
+    let nachher = h
+        .state()
+        .muster
+        .as_ref()
+        .map(|m| (m.pfad.clone(), m.teile.len()));
+    assert_eq!(nachher, vorher);
 }
 
 /// Drop `dateien` onto the window in one frame, as a file manager does with a selection.
@@ -895,32 +905,51 @@ fn alle_muster(ordner: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn jedes_pruefmuster_laedt_oder_meldet() {
+fn jedes_pruefmuster_laedt_wie_klon3d_naehte() {
     let mut muster = Vec::new();
     alle_muster(&muster_ordner(), &mut muster);
     assert!(muster.len() >= 10, "{} Muster gefunden", muster.len());
+    let (mut mit_liste, mut ohne_liste) = (0, 0);
     for p in muster {
         let mut h = fenster();
         let ok = h.state_mut().muster_laden(&p);
         h.run();
+        assert!(ok, "{}: {:?}", p.display(), h.state().fehlerfenster);
         let app = h.state();
-        match &app.muster {
-            Some(m) => {
-                assert!(ok);
-                assert!(!m.teile.is_empty(), "{}: keine Teile", p.display());
-                eprintln!(
-                    "{}: {} Teile, {}",
-                    p.display(),
-                    m.teile.len(),
-                    app.abweichung_text()
-                );
-            }
-            None => {
-                assert!(!ok);
-                let f = app.fehlerfenster.as_deref().unwrap_or("");
-                assert!(!f.is_empty(), "{}: weder Muster noch Meldung", p.display());
-                eprintln!("{}: Meldung {f}", p.display());
-            }
-        }
+        let m = app.muster.as_ref().unwrap();
+        assert!(!m.teile.is_empty(), "{}: keine Teile", p.display());
+
+        // Independently, with the calls `klon3d naehte` makes: the measurement file the pattern
+        // names (relative to the pattern) and the seam list next to it.
+        let muster = read_path(&p).unwrap();
+        let mass = p.parent().unwrap().join(
+            muster
+                .measurements
+                .as_deref()
+                .expect("Muster nennt Maßdatei"),
+        );
+        let ev = Auswertung::new(&muster, lies_messungen(&mass, &muster.unit).unwrap());
+        let liste = p.with_extension("naehte");
+        let soll = if liste.is_file() {
+            mit_liste += 1;
+            let defs = lies_nahtliste(&std::fs::read_to_string(&liste).unwrap()).unwrap();
+            let bericht = pruefe_naehte(&ev, &defs, Kurvenquelle::Seamly).unwrap();
+            let n = bericht.groesste_abweichung().expect("Nahtliste ohne Nähte");
+            format!(
+                "größte Abweichung {} Δ {} cm",
+                n.kennung,
+                delta_wie_cli(n.diff_cm)
+            )
+        } else {
+            ohne_liste += 1;
+            "keine Nahtliste".to_string()
+        };
+        assert_eq!(app.abweichung_text(), soll, "{}", p.display());
+        assert!(h.query_by_label(&soll).is_some(), "Statusleiste: {soll}");
     }
+    // Both kinds are among the test patterns, so both branches above ran.
+    assert!(
+        mit_liste > 0 && ohne_liste > 0,
+        "{mit_liste} / {ohne_liste}"
+    );
 }
