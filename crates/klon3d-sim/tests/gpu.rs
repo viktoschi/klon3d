@@ -9,7 +9,10 @@
 //! ignored like the other solver acceptance tests.
 
 use klon3d_sim::roehre::{bis_zur_ruhe, param_ruhe, Roehre};
-use klon3d_sim::{messung, GpuLoeser, ImplizitCg, ImplizitParameter, Rechenweg};
+use klon3d_sim::{
+    messung, GpuLoeser, ImplizitCg, ImplizitParameter, Rechenweg, Simparameter, Szene, Teilvorgabe,
+    RADICAL_RUBBER_04,
+};
 
 /// Opens the GPU or reports that there is none.
 fn geraet() -> Option<GpuLoeser> {
@@ -235,4 +238,94 @@ fn federn_gehen_an_die_cpu() {
         rw.bild(&mut s);
     }
     assert!(s.x.iter().all(|p| p.iter().all(|q| q.is_finite())));
+}
+
+/// Die Abnahme von Schritt 4b: **Bluse3 v2 mit = 30 Bildern je Sekunde auf der
+/// RTX 3090**, also 33,3 ms je Bild.
+///
+/// Die Schranke ist die Zahl aus `PLAN.md`, nicht was gerade herauskommt: sie
+/// wird nicht aufgeweicht, wenn der Stand sie nicht erreicht. Gemessen wird wie
+/// in `examples/gpu_takt.rs` - dasselbe Muster, dieselbe Szene, 20 Bilder nach
+/// drei Bildern Anlauf.
+///
+/// Ohne Adapter (CI) wird übersprungen; das ist der einzige Grund, aus dem
+/// dieser Test nicht läuft.
+///
+/// **Alleine laufen lassen:** die übrigen Tests dieses Binaries rechnen
+/// gleichzeitig auf denselben Kernen, und eine Messung unter Last ist keine
+/// Messung (parallel gemessen kam 77,7 statt 38,7 ms heraus).
+///
+/// ```text
+/// cargo test --release -p klon3d-sim --test gpu bluse_schafft_30_bilder -- --test-threads=1 --ignored
+/// ```
+///
+/// Er ist `ignore`, weil er die offene Abnahme von 4b behauptet: solange
+/// Bluse3 v2 über 33,3 ms braucht, **muss** er rot sein (gemessen 2026-11-02:
+/// 40,7 ms). Ein Test, der auf seine eigene Zielzahl wartet, gehört nicht in die
+/// grüne Suite, aber er gehört ins Repo - sonst ist die Abnahme eine Behauptung
+/// im Bericht. Steht 4b, wird das `ignore` gestrichen.
+#[test]
+#[ignore = "offene Abnahme 4b: Bluse3 v2 <= 33,3 ms (2026-11-02: 40,7 ms)"]
+#[cfg_attr(debug_assertions, ignore = "nur mit --release")]
+fn bluse_schafft_30_bilder() {
+    let Some(gpu) = geraet() else { return };
+    const BILDER: usize = 20;
+    const SCHRANKE_MS: f64 = 1000.0 / 30.0;
+    let netz = bluse3_v2();
+    let vg = Teilvorgabe {
+        material: RADICAL_RUBBER_04,
+        reduktion: 0.055,
+    };
+    let bauen = || {
+        Szene::aus_netz(
+            &netz,
+            &|_| vg,
+            &|ti, q| [q[0] * 1e-3, q[1] * 1e-3, ti as f64 * 0.01],
+            vec![],
+            Simparameter {
+                schwerkraft: [0.0, 0.0, -9.81],
+                ..Simparameter::default()
+            },
+        )
+    };
+    let param = ImplizitParameter::default();
+    let mut a = bauen();
+    let mut b = a.clone();
+    // Anlauf, damit der Zustand nicht die Anfangslage ist.
+    let mut warm = ImplizitCg::neu(param);
+    for _ in 0..3 {
+        warm.bild(&mut a);
+        warm.bild(&mut b);
+    }
+    let mut rw = ImplizitCg::mit_loeser(param, Box::new(gpu));
+    let t0 = std::time::Instant::now();
+    for _ in 0..BILDER {
+        rw.bild(&mut b);
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1e3 / BILDER as f64;
+    eprintln!("Bluse3 v2: {ms:.2} ms je Bild = {:.1} Bilder/s", 1000.0 / ms);
+    assert!(
+        ms <= SCHRANKE_MS,
+        "Bluse3 v2 braucht {ms:.2} ms je Bild = {:.1} Bilder/s, verlangt sind \
+         höchstens {SCHRANKE_MS:.1} ms (30/s)",
+        1000.0 / ms
+    );
+}
+
+/// Das Muster der Bluse, wie `examples/gpu_takt.rs` es lädt.
+fn bluse3_v2() -> klon3d_mesh::Musternetz {
+    use klon3d_mesh::{vernetze, Parameter};
+    use klon3d_pattern::geom::Auswertung;
+    use klon3d_pattern::kanten::Kurvenquelle;
+    use klon3d_pattern::naehte::{lies_nahtliste, pruefe_naehte};
+    let wurzel = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../klon3d-pattern/tests/muster");
+    let m = klon3d_pattern::read_path(&wurzel.join("bluse3_v2.sm2d")).expect("Muster");
+    let ev = Auswertung::lade(&m, &wurzel.join("measurements.smis")).expect("Maße");
+    let defs = lies_nahtliste(
+        &std::fs::read_to_string(&wurzel.join("bluse3_v2.naehte")).expect("Nahtliste"),
+    )
+    .expect("Nahtliste");
+    let b = pruefe_naehte(&ev, &defs, Kurvenquelle::Seamly).expect("Nähte");
+    vernetze(&ev, Kurvenquelle::Seamly, &b.naehte, &Parameter::default()).expect("Netz")
 }
