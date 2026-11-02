@@ -179,9 +179,7 @@ fn knopfzeile(app: &mut App, ui: &mut egui::Ui) {
         None => (false, "erst eine Datei anklicken".to_string()),
         Some(Art::Spaeter) => (false, SPAETER.to_string()),
         Some(Art::Muster) => (true, String::new()),
-        Some(Art::Massdatei | Art::Nahtliste) if ziel.is_none() => {
-            (false, ERST_MUSTER.to_string())
-        }
+        Some(Art::Massdatei | Art::Nahtliste) if ziel.is_none() => (false, ERST_MUSTER.to_string()),
         Some(_) => (true, String::new()),
     };
     ui.horizontal(|ui| {

@@ -9,39 +9,49 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-02 – step 7b (window arrangement like CLO) in progress.** Done and committed so far:
+**2026-11-02 – step 7b done:** the window is arranged the way CLO users know it, in three commits
+(each builds, keeps `cargo +1.99 test --locked -p klon3d-app` green and passes the Windows cross
+check): **39 unit tests + 29 UI tests** (18 in `tests/oberflaeche.rs`, 11 in
+`tests/fensteranordnung.rs`), no compiler warnings, the crate's files rustfmt-clean (as before; no
+`cargo fmt` over the workspace).
 
-* **Part 1 – menus and shortcuts:** nine menus in CLO's order with our own German labels
-  (Datei, Bearbeiten, 3D-Kleidung, 2D-Schnitt, Materialien, Avatar, Anzeige, Einstellungen,
-  Hilfe; the old "Simulation", "Ansicht" and "Prüfen" menus are gone), submenus, checkboxes for
-  toggles, radio buttons for design and language, every later entry disabled with the hover text
-  `SPAETER`. New: Datei › Zuletzt geöffnet (last 10 patterns, stored, missing files disabled,
-  "Liste leeren"), Datei › Informationen… (window in `dialoge.rs`), 2D toggles Längen (edge
-  lengths in cm at each edge's middle, `ansicht2d::halbweg`), Teilnamen, Maßstab; shortcuts
-  Umschalt+S (Nähte), Umschalt+Z (Längen), Strg+Tab (3D/2D window). New module `anordnung.rs`:
-  arrangement, 2D toggles and recent files as forgiving `name=wert` texts in eframe's storage
-  (missing keys = defaults); fabrics folder `assets/stoffe` searched upwards from the program
-  and the current folder. The floating windows moved from `app.rs` to `dialoge.rs`.
-* **Part 2 – layout:** `fenster.rs` lays out menu bar, file toolbar (Neu, Öffnen, Speichern,
-  Rückgängig, Wiederholen, Hell/Dunkel), status bar, the library left (`bibliothek.rs`), object
-  browser above properties right, and the 3D window (placeholder canvas "3D-Ansicht") left of
-  the 2D window with a draggable divider; each window has its own toolbar (wrapped when narrow)
-  and a frame, the active one highlighted, a press inside activates it. Both splits (3D | 2D and
-  browser | properties) are stored shares (`Anordnung::teilung`, `teilung_rechts`), not pixel
-  sizes – a nested egui panel stored the size of the first, tiny frame. Side panels are capped
-  at 17 % / 27 % of the width (`fenster::SEITE_ANTEIL`); with both windows shown the 2D window
-  keeps ≥ 304 (300 inside its frame) and the 3D window ≥ 120 as long as there is room
-  (`fenster::teilung_breiten`), so at 800×500 the 2D view keeps its 300 px. `dateiwahl.rs` now
-  has the shared core `Verzeichnis` (listing, drive buttons, rows with single/double click);
-  `Dateiwahl` (modal) and `Bibliothek` (docked) both use it. The object browser has the tabs
-  Teile | Nähte | Stoffe (AccessKit role "tab"); the properties show the seam clicked last
-  (Kennung, Bezeichnung, `L_A cm`, `L_B cm`, `Δ cm`, both sides with pieces and edges, notch
-  pairs, notches without partner) or the selected piece. Every area carries an AccessKit "pane"
-  name for the tests (`fenster::flaeche`).
-* **Next – part 3 (tests)** as listed in task D of the session prompt: Fenster toggles, Strg+Tab,
-  Umschalt+S/Z (not in the search field), recent files, library double clicks, seam properties,
-  old stored state, layout reset; then screenshots (dark, light, Längen with a piece selected)
-  under `/tmp/claude-0/shots2/`.
+* **Menus and shortcuts:** nine menus in CLO's order with our own German labels – Datei,
+  Bearbeiten, 3D-Kleidung, 2D-Schnitt, Materialien, Avatar, Anzeige, Einstellungen, Hilfe; the old
+  "Simulation", "Ansicht" and "Prüfen" menus are gone (full list below). Submenus, checkboxes for
+  toggles (shortcut on the right), radio buttons for design and language, every later entry
+  disabled with the hover text `SPAETER`. Datei › Zuletzt geöffnet (last 10 patterns, stored,
+  missing files disabled, "Liste leeren"), Datei › Informationen… (`dialoge.rs`). Shortcuts
+  Umschalt+S (Nähte), Umschalt+Z (Längen), Strg+Tab (active window) under the old rule (letters and
+  Tab not in a text field or with the file dialog open).
+* **Layout** (`fenster.rs`): menu bar, file toolbar (Neu, Öffnen, Speichern, Rückgängig,
+  Wiederholen, Hell/Dunkel), status bar; library left (`bibliothek.rs`); object browser (tabs
+  Teile | Nähte | Stoffe) above the properties right; in the middle the 3D window (placeholder
+  canvas "3D-Ansicht") left of the 2D window with a draggable divider. Each window has its own
+  toolbar (wrapped when narrow) and a frame, the active one highlighted, a press inside activates
+  it. Both splits (3D | 2D, browser | properties) are stored *shares*, not pixel sizes – a nested
+  egui panel had stored the size of the first, tiny frame. Side panels are capped at 17 % / 27 %
+  of the width; with both windows shown the 2D window keeps ≥ 304 (300 inside its frame) and the
+  3D window ≥ 120 while there is room (`fenster::teilung_breiten`), so at 800×500 the 2D view
+  keeps its 300 px. The middle is filled with the panel colour (unfilled, the light theme showed
+  black toolbar rows – seen on the screenshot).
+* **Library:** `dateiwahl.rs` has the shared core `Verzeichnis` (listing, drive buttons, rows with
+  single click = mark / open folder, double click = act); the modal `Dateiwahl` and the docked
+  `Bibliothek` both use it. Places Muster / Stoffe / Zuletzt (drives on Windows), path, Hoch; `.sm2d`
+  opens, `.smis`/`.naehte` apply to the pattern shown or waiting (same path as a dropped file),
+  `.zfab`/`.zprj` greyed. Fabrics folder = `assets/stoffe` searched upwards from the program's and
+  the current folder (`anordnung::stoffordner`).
+* **Properties of a seam** (row clicked last): Kennung, Bezeichnung, `L_A cm`, `L_B cm`, `Δ cm`,
+  both sides with their pieces (short names), points and edges, notch pairs with Δ, notches
+  without partner. **2D toggles** Nähte, Längen (edge length in cm at the edge's middle on a
+  backdrop, of the selected piece or of all; labels shorter than their edge or covering another
+  label are left out), Teilnamen, Maßstab.
+* **Persistence** (`anordnung.rs`): arrangement (visibility, both shares), 2D toggles and recent
+  files as forgiving `name=wert` texts in eframe's storage; missing or damaged keys = defaults.
+  Anzeige › Anordnung zurücksetzen also drops egui's stored panel sizes.
+* **Screenshots** (checked by eye, not in the repository): dark, light, and Längen with a piece
+  selected, under Xvfb at 1600×1000 with the default window 1400×900 – nothing clipped or
+  overlapping. They were made in `/tmp/claude-0/shots2/` of the cloud container and are gone with
+  it; the procedure is under "Environment" below.
 
 **2026-11-01:** steps 1–7 done. Step 7 (review of the whole crate) found 25 defects; all are fixed
 in five commits (groups A–E below, each builds and keeps `cargo +1.99 test --locked -p klon3d-app`
@@ -194,6 +204,15 @@ builds (`out.textures_delta.clear()`). kittest finds `Label`s by their AccessKit
 siblings under one parent (see `zeile_nach` in the UI test). A click on a disabled menu entry closes
 the menu (egui), nothing else.
 
+Notes from step 7b: kittest feeds **one event per step** and a step is 0.25 s – the two clicks
+of a double click then lie 0.5 s apart, too slow for egui (0.3 s); the library test builds its
+window `with_step_dt(1/30)` (`schnelles_fenster`). A click shortly before a double click turns it
+into a triple click (`double_clicked()` is false). Menu-bar buttons, toolbar buttons and submenus
+share names ("Avatar", "2D-Schnitt", "Zurücksetzen"): the helpers `in_der_leiste` and `im_menue`
+pick by "inside a menu" (AccessKit role menu among the ancestors – the menu bar is one too) and by
+position. Areas are found as AccessKit panes by name (`fenster::flaeche`), tabs by role tab. A
+nested `egui::Panel` stores its size from the first frame, which can be tiny – use shares.
+
 ## Goal (from #34)
 
 First slice of stage 6 in PLAN.md: an `eframe` window with the `wgpu` renderer and the layout the user asked
@@ -221,18 +240,36 @@ exist but are disabled.
 |---|---|
 | `src/main.rs` | command line (`klon3d-app [muster.sm2d]`), `NativeOptions` (wgpu renderer, window size, app id), `run_native` |
 | `src/lib.rs` | modules, so that tests can build the app |
-| `src/app.rs` | `struct App` implementing `eframe::App` (`fn ui(&mut self, ui, frame)`; `fn save` for persistence): menu bar, toolbar, side panels, status bar, keyboard shortcuts, theme |
+| `src/app.rs` | `struct App` implementing `eframe::App`: state, `Aktion` queue and `ausfuehren`, loading, shortcuts, `save` |
+| `src/anordnung.rs` | what is stored besides theme and folder: `Anordnung` (visibility, shares), `Anzeige2d`, recent files; fabrics folder search |
+| `src/fenster.rs` | the layout: panels, 3D and 2D windows with divider, window frames and toolbars, active window |
+| `src/menue.rs` | the nine menus, the file toolbar, the toolbars of the 3D and 2D window |
+| `src/bibliothek.rs` | the library panel on the shared `Verzeichnis` |
+| `src/panele.rs` | object browser (tabs Teile, Nähte, Stoffe), properties of a piece or seam, status bar |
+| `src/dialoge.rs` | floating windows: file dialog, error, help (shortcuts, about), Informationen, drop hint |
 | `src/muster.rs` | loading without UI: `.sm2d` → `Auswertung` → piece outlines (`ev.stueck_umriss`), circumference (`ev.umriss_laenge`), boundary edges (`ev.teilrand(stueck, Kurvenquelle::Seamly)`), seam report (`naehte::lies_nahtliste` + `pruefe_naehte`, the same numbers as `klon3d naehte`); measurement file as the pattern names it (see `klon3d-view/src/main.rs`, `Blatt::laden`) or chosen by hand |
-| `src/ansicht2d.rs` | 2D view: pieces laid out side by side (as `klon3d-view` `auslegen`), pan, zoom around the cursor, fit, hit test, selection highlight, scale bar |
-| `src/dateiwahl.rs` | the in-app file dialog |
-| `tests/oberflaeche.rs` | kittest: load `crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d`, piece list, seam list Δ equals `pruefe_naehte`, selection fills the properties, theme toggles and survives save/restore, menus exist |
-| `examples/bildschirmfoto.rs` | renders the window with kittest's wgpu renderer to PNG (dark and light); skips without an adapter |
+| `src/ansicht2d.rs` | 2D view: pieces laid out side by side (as `klon3d-view` `auslegen`), pan, zoom around the cursor, fit, hit test, selection highlight, seams, edge lengths, scale bar |
+| `src/dateiwahl.rs` | folder listing `Verzeichnis` (shared with the library) and the modal file dialog |
+| `tests/gemeinsam/mod.rs` | helpers of the UI tests: windows, independent Bluse3 evaluation, grid rows, menus, storage |
+| `tests/oberflaeche.rs` | kittest: pieces and seams against `pruefe_naehte`, selection, theme, menus and their disabled entries, shortcuts, file dialog, drag and drop, measurement file choice, minimum size, all test patterns |
+| `tests/fensteranordnung.rs` | kittest: toolbars, Fenster toggles, Strg+Tab, Umschalt+S/Z, edge lengths, recent files, library, fabrics, Informationen, seam properties, old stored state, reset |
+| `examples/bildschirmfoto.rs` | (planned, not written) renders the window with kittest's wgpu renderer to PNG; skips without an adapter |
 
-Menu bar (from PLAN.md): **Datei** (Muster öffnen, Maßdatei, Nahtliste, Körper, Export OBJ/DXF, Beenden) ·
-**Simulation** (Start, Pause, Einzelschritt, Zurücksetzen, Material) · **Ansicht** (2D-Muster, 3D, Netz,
-Nähte, Dehnungs- und Abstandskarte, hell/dunkel) · **Prüfen** (Nahtlängen, Netzprüfung) · **Hilfe**.
-Status bar: frames per second, GPU adapter and backend (`frame.wgpu_render_state()` → adapter info), largest
-seam deviation, last message.
+Menu bar (step 7b; `[s]` = disabled, a later task): **Datei** (Neu Strg+N [s], Öffnen… Strg+O,
+Zuletzt geöffnet ›, Hinzufügen › Maßdatei… / Nahtliste…, Speichern Strg+S [s], Speichern unter…
+Strg+Umschalt+S [s], Import › Seamly2D-Muster (.sm2d)… / CLO-Projekt (.zprj)… [s], Export › OBJ… [s] /
+DXF… [s], Informationen…, Beenden Strg+Q) · **Bearbeiten** (Rückgängig Strg+Z [s], Wiederholen
+Strg+Y [s], Alles auswählen Strg+A [s], Auswahl aufheben Esc) · **3D-Kleidung** (Simulation
+starten/anhalten, Einzelschritt, Zurücksetzen, Anordnen, Netzauflösung…, Netzprüfung – all [s]) ·
+**2D-Schnitt** (Auslage / Konstruktionslage L, Einpassen F, Nächstes Teil Tab, Vorheriges Teil
+Umschalt+Tab, Nähen › Nahtliste wählen… / Nahtlängen prüfen / Nähte anzeigen Umschalt+S) ·
+**Materialien** (Stoff zuweisen… [s], Stoffbibliothek) · **Avatar** (Körper laden… Strg+Umschalt+A [s],
+Maßdatei wählen…, Avatar anzeigen Umschalt+A [s], Maße am Körper [s]) · **Anzeige** (Blickwinkel ›
+[s], 3D-Kleidung › [s], 2D-Schnitt › Nähte / Längen / Teilnamen / Maßstab, Avatar › [s], Fenster ›
+five areas + Fenster wechseln Strg+Tab, Werkzeugleisten › three toolbars, Anordnung zurücksetzen) ·
+**Einstellungen** (Design › Dunkel / Hell, Sprache › Deutsch / English [s]) · **Hilfe** (Tastenkürzel,
+Über klon3d). Status bar: frames per second, GPU adapter and backend, largest seam deviation, last
+message.
 
 ## Steps
 
@@ -245,8 +282,9 @@ seam deviation, last message.
 - [x] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
 - [x] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
       (25 findings, list above)
-- [ ] 7b. Window arrangement like CLO: (1) menus and shortcuts – done; (2) layout with library,
-      3D | 2D split, object browser and properties, toolbars, persistence – done; (3) tests
+- [x] 7b. Window arrangement like CLO: (1) menus and shortcuts; (2) layout with library,
+      3D | 2D split, object browser and properties, toolbars, persistence; (3) tests
+      (`tests/fensteranordnung.rs`) and screenshots checked by eye (2026-11-02)
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`
       – both done during step 7 (build **and** test in the job); open: the job passing on CI
@@ -272,6 +310,13 @@ apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers
 apt-get install -y --no-install-recommends libxkbcommon-x11-0
 xvfb-run -s "-screen 0 1600x1000x24" sh -c 'target/debug/klon3d-app crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d & sleep 8; import -window root bild.png'
 ```
+
+Screenshots in a given state (step 7b): run with a throwaway `HOME` and write eframe's storage
+first, e.g. `printf '{"klon3d.thema":"hell"}' > $HOME/.local/share/klon3d/app.ron` (keys of
+`app.rs` / `anordnung.rs`, e.g. `"klon3d.anzeige2d":"naehte=1;laengen=1;teilnamen=1;massstab=1"`).
+A click with xdotool: `xdotool mousemove X Y; sleep 1; xdotool mousedown 1; sleep 0.3; xdotool
+mouseup 1` (the piece "Rueckenteil Seite Links" sits at 1103,265 in the default layout). Keys do not
+reach the window without a window manager.
 
 Disk: `target/` grows to ~17 GB with all test binaries, and throwaway probe crates in the scratch
 folders add more; on 2026-11-01 the container's disk was full (263 MB free) and builds failed with

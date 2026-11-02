@@ -448,13 +448,15 @@ fn nahtseite(m: &Muster, seite: &Nahtseite, name: &str, ui: &mut egui::Ui) {
                 let kanten: Vec<String> = ts
                     .kanten
                     .iter()
-                    .map(|&k| match rand.and_then(|r| r.kanten.get(k).map(|ka| (r, ka))) {
-                        Some((r, ka)) => format!(
-                            "{} › {}",
-                            r.punktknoten[ka.von].name, r.punktknoten[ka.bis].name
-                        ),
-                        None => format!("#{k}"),
-                    })
+                    .map(
+                        |&k| match rand.and_then(|r| r.kanten.get(k).map(|ka| (r, ka))) {
+                            Some((r, ka)) => format!(
+                                "{} › {}",
+                                r.punktknoten[ka.von].name, r.punktknoten[ka.bis].name
+                            ),
+                            None => format!("#{k}"),
+                        },
+                    )
                     .collect();
                 ui.label(kanten.join(", "));
                 ui.label(cm4(ts.laenge_cm));
@@ -506,7 +508,7 @@ fn naht_eigenschaften(m: &Muster, n: &Nahtergebnis, ui: &mut egui::Ui) {
                     .num_columns(5)
                     .striped(true)
                     .show(ui, |ui| {
-                        for kopf in ["A", "B", "bei A cm", "bei B cm", "Δ cm"] {
+                        for kopf in ["A", "B", "bei A", "bei B", "Δ"] {
                             ui.strong(kopf);
                         }
                         ui.end_row();
@@ -536,7 +538,7 @@ fn naht_eigenschaften(m: &Muster, n: &Nahtergebnis, ui: &mut egui::Ui) {
                     );
                 }
             }
-            ui.weak("Abstände vom Nahtanfang entlang der Seite");
+            ui.weak("Passzeichen: Abstände in cm vom Nahtanfang entlang der Seite");
         });
 }
 

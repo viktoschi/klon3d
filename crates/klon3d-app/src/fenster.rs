@@ -20,7 +20,9 @@
 //! is laid out before the area's content, so it never catches a click meant for the content.
 
 use eframe::egui;
-use egui::{pos2, vec2, Align, Layout, Rect, Role, Sense, Stroke, StrokeKind, UiBuilder, WidgetInfo};
+use egui::{
+    pos2, vec2, Align, Layout, Rect, Role, Sense, Stroke, StrokeKind, UiBuilder, WidgetInfo,
+};
 
 use crate::anordnung::{Fenster, TEILUNG_RECHTS_VORGABE, TEILUNG_VORGABE};
 use crate::ansicht2d::Klick;
@@ -118,7 +120,12 @@ pub fn zeichnen(app: &mut App, ui: &mut egui::Ui) {
             .size_range(200.0f32.min(rechts_max)..=rechts_max)
             .show(ui, |ui| rechts(app, ui, browser, eigenschaften));
     }
-    egui::CentralPanel::no_frame().show(ui, |ui| mitte(app, ui));
+    // Filled like the panels: the toolbar rows and the divider lie on it (unfilled, the light
+    // theme showed black there).
+    let grund = egui::Frame::NONE.fill(ui.visuals().panel_fill);
+    egui::CentralPanel::no_frame()
+        .frame(grund)
+        .show(ui, |ui| mitte(app, ui));
 }
 
 /// The right panel: object browser above, properties below, or one of them alone.
@@ -128,10 +135,18 @@ fn rechts(app: &mut App, ui: &mut egui::Ui, browser: bool, eigenschaften: bool) 
         (true, true) => {
             let (h1, _) = teilung_rechts(rect.height(), app.anordnung.teilung_rechts);
             let oben = Rect::from_min_size(rect.min, vec2(rect.width(), h1));
-            let trenn =
-                Rect::from_min_size(pos2(rect.left(), oben.bottom()), vec2(rect.width(), TRENNER));
+            let trenn = Rect::from_min_size(
+                pos2(rect.left(), oben.bottom()),
+                vec2(rect.width(), TRENNER),
+            );
             trenner(app, ui, trenn, rect, Teilung::Rechts);
-            (Some(oben), Some(Rect::from_min_max(pos2(rect.left(), trenn.bottom()), rect.max)))
+            (
+                Some(oben),
+                Some(Rect::from_min_max(
+                    pos2(rect.left(), trenn.bottom()),
+                    rect.max,
+                )),
+            )
         }
         (true, false) => (Some(rect), None),
         (false, true) => (None, Some(rect)),
@@ -294,9 +309,12 @@ fn fenster(app: &mut App, ui: &mut egui::Ui, rect: Rect, f: Fenster) {
     match f {
         Fenster::Drei => ansicht_3d(&mut kind),
         Fenster::Zwei => {
-            let klick =
-                app.ansicht
-                    .ui(&mut kind, app.muster.as_ref(), app.gewaehlt, app.naht_gewaehlt);
+            let klick = app.ansicht.ui(
+                &mut kind,
+                app.muster.as_ref(),
+                app.gewaehlt,
+                app.naht_gewaehlt,
+            );
             match klick {
                 Some(Klick::Teil(i)) => app.aktion(Aktion::TeilWaehlen(i)),
                 Some(Klick::Leer) => app.aktion(Aktion::AuswahlAufheben),
@@ -310,7 +328,8 @@ fn fenster(app: &mut App, ui: &mut egui::Ui, rect: Rect, f: Fenster) {
     } else {
         v.widgets.noninteractive.bg_stroke
     };
-    ui.painter().rect_stroke(rect, 0.0, rahmen, StrokeKind::Inside);
+    ui.painter()
+        .rect_stroke(rect, 0.0, rahmen, StrokeKind::Inside);
 }
 
 /// The 3D window's content until the 3D view exists: a calm placeholder.

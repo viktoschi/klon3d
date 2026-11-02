@@ -289,7 +289,14 @@ fn anzeige(app: &mut App, ui: &mut egui::Ui) {
             a.teilnamen,
             Aktion::TeilnamenUmschalten,
         );
-        haken(ui, app, "Maßstab", "", a.massstab, Aktion::MassstabUmschalten);
+        haken(
+            ui,
+            app,
+            "Maßstab",
+            "",
+            a.massstab,
+            Aktion::MassstabUmschalten,
+        );
     });
     ui.menu_button("Avatar", |ui| spaeter(ui, "Avatar", ""));
     ui.separator();

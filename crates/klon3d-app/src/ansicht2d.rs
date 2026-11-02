@@ -26,7 +26,8 @@
 //! [`Anzeige2d`] switches the seams, the piece names, the scale bar and the edge lengths: with
 //! "Längen" on, every boundary edge of the selected piece – of all pieces when none is selected –
 //! carries its length in cm at its middle ([`halbweg`]), on a backdrop; an edge shorter on screen
-//! than its text gets none, so the labels never pile up.
+//! than its text gets none, nor does one whose label would cover another, so the labels never
+//! pile up – zooming in shows the rest.
 
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
@@ -169,7 +170,10 @@ pub fn halbweg(punkte: &[Pt]) -> Option<(Pt, Pt)> {
         let l = s[0].dist(s[1]);
         if l > 0.0 && rest <= l {
             let (dx, dy) = ((s[1].x - s[0].x) / l, (s[1].y - s[0].y) / l);
-            return Some((Pt::new(s[0].x + dx * rest, s[0].y + dy * rest), Pt::new(dx, dy)));
+            return Some((
+                Pt::new(s[0].x + dx * rest, s[0].y + dy * rest),
+                Pt::new(dx, dy),
+            ));
         }
         rest -= l;
     }
@@ -457,7 +461,16 @@ impl Ansicht2d {
         }
 
         if self.anzeige.laengen {
-            self.laengen(&painter, muster, gewaehlt, &bild, &auf_schirm, sicht, &farben, ui);
+            self.laengen(
+                &painter,
+                muster,
+                gewaehlt,
+                &bild,
+                &auf_schirm,
+                sicht,
+                &farben,
+                ui,
+            );
         }
 
         // Labels on top, only where they fit into the piece.
@@ -488,8 +501,8 @@ impl Ansicht2d {
     }
 
     /// The length of every boundary edge of the selected piece (of all pieces without a
-    /// selection) at the edge's middle, on a backdrop; edges shorter on screen than their text
-    /// are left out.
+    /// selection) at the edge's middle, on a backdrop; edges shorter on screen than their text,
+    /// and labels that would cover one already drawn, are left out.
     #[allow(clippy::too_many_arguments)]
     fn laengen(
         &self,
@@ -503,6 +516,8 @@ impl Ansicht2d {
         ui: &egui::Ui,
     ) {
         let schrift = FontId::proportional(11.0);
+        // Labels already placed: one that would cover another is left out (zooming in shows it).
+        let mut belegt: Vec<Rect> = Vec::new();
         let grund = ui.visuals().extreme_bg_color;
         let hinterlegt = Color32::from_rgba_unmultiplied(grund.r(), grund.g(), grund.b(), 210);
         for (i, t) in muster.teile.iter().enumerate() {
@@ -531,6 +546,10 @@ impl Ansicht2d {
                 }
                 let feld = Rect::from_center_size(bild(mitte, v), galley.size())
                     .expand2(Vec2::new(3.0, 1.0));
+                if belegt.iter().any(|b| b.intersects(feld)) {
+                    continue;
+                }
+                belegt.push(feld);
                 painter.rect_filled(feld, 3.0, hinterlegt);
                 painter.galley(feld.min + Vec2::new(3.0, 1.0), galley, farben.text);
             }

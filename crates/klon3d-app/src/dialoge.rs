@@ -143,14 +143,12 @@ impl App {
                             format!("{} ({herkunft})", m.massdatei.display()),
                         );
                         let (liste, naehte) = match &m.naehte {
-                            Nahtstand::Geprueft { pfad, bericht } => (
-                                pfad.display().to_string(),
-                                bericht.naehte.len().to_string(),
-                            ),
-                            Nahtstand::Keine { gesucht } => (
-                                format!("keine – {} fehlt", gesucht.display()),
-                                "–".into(),
-                            ),
+                            Nahtstand::Geprueft { pfad, bericht } => {
+                                (pfad.display().to_string(), bericht.naehte.len().to_string())
+                            }
+                            Nahtstand::Keine { gesucht } => {
+                                (format!("keine – {} fehlt", gesucht.display()), "–".into())
+                            }
                             Nahtstand::Fehler { pfad, text } => (
                                 format!("{} – nicht prüfbar: {text}", pfad.display()),
                                 "–".into(),

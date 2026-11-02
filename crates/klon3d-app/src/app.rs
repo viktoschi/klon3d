@@ -46,8 +46,8 @@ use crate::anordnung::{
     self, Anordnung, Anzeige2d, Bereich, Fenster, SCHLUESSEL_ANORDNUNG, SCHLUESSEL_ANZEIGE2D,
     SCHLUESSEL_ZULETZT,
 };
-use crate::bibliothek::Bibliothek;
 use crate::ansicht2d::Ansicht2d;
+use crate::bibliothek::Bibliothek;
 use crate::dateiwahl::{auflisten, passt, Dateiwahl, Zweck};
 use crate::muster::{delta4, Ladeauftrag, Ladefehler, Muster, Nahtstand};
 use crate::panele::Reiter;
@@ -485,9 +485,7 @@ impl App {
                     self.ansicht.lage_umschalten();
                 }
             }
-            Aktion::NaehteUmschalten => {
-                self.ansicht.anzeige.naehte = !self.ansicht.anzeige.naehte
-            }
+            Aktion::NaehteUmschalten => self.ansicht.anzeige.naehte = !self.ansicht.anzeige.naehte,
             Aktion::LaengenUmschalten => {
                 self.ansicht.anzeige.laengen = !self.ansicht.anzeige.laengen
             }
@@ -751,6 +749,9 @@ impl eframe::App for App {
         storage.set_string(SCHLUESSEL_ORDNER, self.letzter_ordner.display().to_string());
         storage.set_string(SCHLUESSEL_ANORDNUNG, self.anordnung.als_text());
         storage.set_string(SCHLUESSEL_ANZEIGE2D, self.ansicht.anzeige.als_text());
-        storage.set_string(SCHLUESSEL_ZULETZT, anordnung::zuletzt_als_text(&self.zuletzt));
+        storage.set_string(
+            SCHLUESSEL_ZULETZT,
+            anordnung::zuletzt_als_text(&self.zuletzt),
+        );
     }
 }

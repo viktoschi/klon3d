@@ -346,10 +346,7 @@ mod tests {
         assert!(a.browser && !a.fenster3d);
         assert_eq!(a.teilung, TEILUNG_VORGABE);
         assert_eq!(Anordnung::aus_text("teilung=7").teilung, 1.0);
-        assert_eq!(
-            Anordnung::aus_text("teilung_rechts=-1").teilung_rechts,
-            0.0
-        );
+        assert_eq!(Anordnung::aus_text("teilung_rechts=-1").teilung_rechts, 0.0);
         assert_eq!(
             Anordnung::aus_text("teilung_rechts=x").teilung_rechts,
             TEILUNG_RECHTS_VORGABE
@@ -398,7 +395,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("assets/stoffe")).unwrap();
         std::fs::create_dir_all(d.join("a/b")).unwrap();
-        assert_eq!(stoffordner_ab(&d.join("a/b")), Some(d.join("assets/stoffe")));
+        assert_eq!(
+            stoffordner_ab(&d.join("a/b")),
+            Some(d.join("assets/stoffe"))
+        );
         let _ = std::fs::remove_dir_all(&d);
         // The tests run in the crate folder; the repository's fabrics are above it.
         let o = stoffordner().expect("assets/stoffe des Repositorys");
