@@ -6,6 +6,10 @@
 //! path field – absolute or relative to the current folder, on Windows also a bare drive letter
 //! (`D:`). The listing and the path handling are plain functions with unit tests; [`Dateiwahl::ui`]
 //! only shows them.
+//!
+//! Nothing here touches the disk per frame: the folder is read when it changes, the drive list
+//! once per dialog (on Windows from `GetLogicalDrives`, without opening a drive – a disconnected
+//! network drive would block), and only the visible rows of the listing are laid out.
 
 use std::path::{Path, PathBuf};
 
@@ -62,7 +66,7 @@ pub fn passt(pfad: &Path, endungen: &[&str]) -> bool {
 }
 
 /// Subfolders first, then the files that match `endungen` (all files with `alle`), each sorted by
-/// name without regard to case. Hidden entries (name starting with `.`) are left out.
+/// name without regard to case. Hidden entries ([`versteckt`]) are left out.
 pub fn auflisten(ordner: &Path, endungen: &[&str], alle: bool) -> Result<Vec<Eintrag>, String> {
     let lesen = std::fs::read_dir(ordner)
         .map_err(|e| format!("Ordner nicht lesbar: {}: {e}", ordner.display()))?;
@@ -70,7 +74,7 @@ pub fn auflisten(ordner: &Path, endungen: &[&str], alle: bool) -> Result<Vec<Ein
     let mut dateien = Vec::new();
     for e in lesen.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if versteckt(&e, &name) {
             continue;
         }
         let pfad = e.path();
@@ -99,6 +103,28 @@ pub fn auflisten(ordner: &Path, endungen: &[&str], alle: bool) -> Result<Vec<Ein
     dateien.sort_by(nach_name);
     ordner_liste.extend(dateien);
     Ok(ordner_liste)
+}
+
+/// Is a folder entry hidden? Its name starts with a dot, or on Windows it carries the hidden or
+/// system attribute (AppData, `$Recycle.Bin`, "System Volume Information", the old junctions such
+/// as "Application Data" that cannot be listed). The attributes come with the directory listing on
+/// Windows, so this opens nothing.
+fn versteckt(eintrag: &std::fs::DirEntry, name: &str) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const VERSTECKT: u32 = 0x2; // FILE_ATTRIBUTE_HIDDEN
+        const SYSTEM: u32 = 0x4; // FILE_ATTRIBUTE_SYSTEM
+        if let Ok(m) = eintrag.metadata() {
+            return m.file_attributes() & (VERSTECKT | SYSTEM) != 0;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = eintrag;
+    false
 }
 
 /// The path meant by the text in the path field, seen from folder `basis`.
@@ -143,16 +169,34 @@ fn heimordner() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// The roots one can jump to: on Windows every existing drive, elsewhere `/`.
+/// The roots one can jump to: on Windows the drives the system reports, elsewhere `/`.
+///
+/// On Windows the drives are not touched: probing `X:\` of a disconnected network drive blocks
+/// until a network timeout. Whether a drive is readable shows when the user opens it.
 pub fn laufwerke() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        (b'A'..=b'Z')
-            .map(|c| PathBuf::from(format!("{}:\\", c as char)))
-            .filter(|p| p.is_dir())
-            .collect()
-    } else {
+    #[cfg(windows)]
+    {
+        // SAFETY: GetLogicalDrives takes no arguments and only returns a bit mask.
+        laufwerke_aus_maske(unsafe { GetLogicalDrives() })
+    }
+    #[cfg(not(windows))]
+    {
         vec![PathBuf::from("/")]
     }
+}
+
+/// The drive roots of a bit mask as `GetLogicalDrives` returns it: bit 0 is `A:\`, bit 25 `Z:\`.
+pub fn laufwerke_aus_maske(maske: u32) -> Vec<PathBuf> {
+    (0..26u8)
+        .filter(|i| maske & (1 << i) != 0)
+        .map(|i| PathBuf::from(format!("{}:\\", (b'A' + i) as char)))
+        .collect()
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetLogicalDrives() -> u32;
 }
 
 /// Remove `.` and `..` components where that is possible without the file system, so that the
@@ -193,6 +237,8 @@ pub struct Dateiwahl {
     pub eintraege: Vec<Eintrag>,
     /// Why the last action did not work.
     pub fehler: Option<String>,
+    /// The drive buttons, read once when the dialog opens ([`laufwerke`]).
+    pub laufwerke: Vec<PathBuf>,
     markiert: Option<PathBuf>,
 }
 
@@ -206,6 +252,7 @@ impl Dateiwahl {
             alle: false,
             eintraege: Vec::new(),
             fehler: None,
+            laufwerke: laufwerke(),
             markiert: None,
         };
         let start = if ordner.is_dir() {
@@ -276,6 +323,24 @@ impl Dateiwahl {
             .join(", ")
     }
 
+    /// The filter as the footer shows it.
+    pub fn filter_zeile(&self) -> String {
+        if self.alle {
+            "Filter: aus (alle Dateien)".into()
+        } else {
+            format!("Filter: {}", self.filter_text())
+        }
+    }
+
+    /// What an empty listing says.
+    pub fn leer_text(&self) -> String {
+        if self.alle {
+            "keine Einträge".into()
+        } else {
+            format!("keine Ordner und keine {}-Dateien", self.filter_text())
+        }
+    }
+
     /// Show the dialog as a window; returns the answer once the user chose or cancelled.
     pub fn ui(&mut self, ctx: &egui::Context) -> Option<Antwort> {
         let mut antwort = None;
@@ -294,15 +359,19 @@ impl Dateiwahl {
                     {
                         self.hoch();
                     }
-                    for lw in laufwerke() {
+                    let mut ziel = None;
+                    for lw in &self.laufwerke {
                         let name = lw.display().to_string();
                         if ui
                             .button(&name)
                             .on_hover_text(format!("zu {name} wechseln"))
                             .clicked()
                         {
-                            self.wechseln(&lw);
+                            ziel = Some(lw.clone());
                         }
+                    }
+                    if let Some(lw) = ziel {
+                        self.wechseln(&lw);
                     }
                     if ui
                         .checkbox(&mut self.alle, "alle Dateien")
@@ -329,25 +398,28 @@ impl Dateiwahl {
                 }
                 ui.separator();
                 let unten = 36.0;
+                if self.eintraege.is_empty() {
+                    ui.weak(self.leer_text());
+                }
+                // Every row has the same height, so only the visible ones are laid out – a folder
+                // with tens of thousands of files stays quick.
+                let zeile = zeilenhoehe(ui);
                 egui::ScrollArea::vertical()
                     .max_height((ui.available_height() - unten).max(80.0))
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if self.eintraege.is_empty() {
-                            ui.weak(format!(
-                                "keine Ordner und keine {}-Dateien",
-                                self.filter_text()
-                            ));
-                        }
+                    .show_rows(ui, zeile, self.eintraege.len(), |ui, sichtbar| {
                         let mut wechsel = None;
-                        for e in &self.eintraege {
+                        for e in &self.eintraege[sichtbar] {
                             let text = if e.ordner {
                                 format!("{}{}", e.name, std::path::MAIN_SEPARATOR)
                             } else {
                                 e.name.clone()
                             };
                             let gewaehlt = self.markiert.as_ref() == Some(&e.pfad);
-                            let r = ui.selectable_label(gewaehlt, text);
+                            let r = ui.add(
+                                egui::Button::selectable(gewaehlt, text)
+                                    .min_size(egui::vec2(0.0, zeile)),
+                            );
                             if e.ordner && r.clicked() {
                                 wechsel = Some(e.pfad.clone());
                             } else if !e.ordner && r.double_clicked() {
@@ -374,11 +446,18 @@ impl Dateiwahl {
                     if ui.button("Abbrechen").clicked() {
                         antwort = Some(Antwort::Abbruch);
                     }
-                    ui.weak(format!("Filter: {}", self.filter_text()));
+                    ui.weak(self.filter_zeile());
                 });
             });
         antwort
     }
+}
+
+/// Height of one row of the listing without spacing: at least a button's natural height.
+fn zeilenhoehe(ui: &egui::Ui) -> f32 {
+    let natuerlich =
+        ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+    natuerlich.max(ui.spacing().interact_size.y)
 }
 
 #[cfg(test)]
@@ -434,6 +513,18 @@ mod tests {
             ]
         );
         assert!(auflisten(&d.join("gibt_es_nicht"), &["sm2d"], false).is_err());
+        if cfg!(windows) {
+            // A file with the hidden attribute is left out like a dot file.
+            let ok = std::process::Command::new("attrib")
+                .arg("+h")
+                .arg(d.join("b.sm2d"))
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "attrib +h");
+            let e = auflisten(&d, Zweck::Muster.endungen(), false).unwrap();
+            assert_eq!(namen(&e), ["ast", "Zweig", "A.SM2D"]);
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -461,9 +552,21 @@ mod tests {
         assert!(ist_laufwerk("D:") && ist_laufwerk("d:\\") && ist_laufwerk("C:/"));
         assert!(!ist_laufwerk("D:x") && !ist_laufwerk("1:") && !ist_laufwerk("D"));
         let basis = Path::new("basis");
+        assert_eq!(
+            laufwerke_aus_maske(0b101 | 1 << 25),
+            ["A:\\", "C:\\", "Z:\\"].map(PathBuf::from)
+        );
+        assert!(laufwerke_aus_maske(0).is_empty());
         if cfg!(windows) {
             assert_eq!(eingabe_aufloesen("D:", basis), PathBuf::from("D:\\"));
             assert_eq!(eingabe_aufloesen("d:/", basis), PathBuf::from("d:\\"));
+            // The system drive is among the drives the system reports.
+            let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+            assert!(
+                laufwerke().contains(&PathBuf::from(format!("{system}\\"))),
+                "{:?}",
+                laufwerke()
+            );
         } else {
             // Elsewhere `D:` is an ordinary (relative) name.
             assert_eq!(eingabe_aufloesen("D:", basis), basis.join("D:"));
@@ -523,6 +626,48 @@ mod tests {
         w.wechseln(&d.join("gibt_es_nicht"));
         assert_eq!(w.ordner, vorher);
         assert!(w.fehler.is_some());
+
+        // The footer and an empty listing say whether the filter is on.
+        w.alle = false;
+        assert_eq!(w.filter_zeile(), "Filter: .sm2d");
+        w.wechseln(&d.join("Zweig"));
+        assert_eq!(w.leer_text(), "keine Ordner und keine .sm2d-Dateien");
+        w.alle = true;
+        assert_eq!(w.filter_zeile(), "Filter: aus (alle Dateien)");
+        assert_eq!(w.leer_text(), "keine Einträge");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn lange_ordner_nur_sichtbare_zeilen() {
+        // 3000 files: only the rows in view are laid out. Counted through AccessKit, which gets a
+        // node for every widget laid out, painted or not.
+        let d = std::env::temp_dir().join(format!("klon3d-app-viele-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..3000 {
+            std::fs::write(d.join(format!("teil_{i:04}.sm2d")), "").unwrap();
+        }
+        let mut w = Dateiwahl::neu(Zweck::Muster, &d);
+        assert_eq!(w.eintraege.len(), 3000);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut zeilen = 0;
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                w.ui(ui.ctx());
+            });
+            // Unapplied texture deltas panic when dropped in debug builds.
+            out.textures_delta.clear();
+            let baum = out.platform_output.accesskit_update.expect("AccessKit");
+            zeilen = baum
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.label().is_some_and(|l| l.starts_with("teil_")))
+                .count();
+        }
+        assert!(zeilen > 0, "keine Zeile");
+        assert!(zeilen < 100, "{zeilen} von 3000 Zeilen angelegt");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -11,8 +11,9 @@ done and committed; update "Status" at the top when you stop.
 
 **2026-11-01:** step 7 (review) in progress. A review of the whole crate found 25 defects (numbered
 below as in the review); they are fixed in this order, one commit per group, each commit builds and
-`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **groups A (loading) and
-B (drawing and panels)**. Next: groups C–E below, then tick step 7; after that steps 8–11.
+`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **groups A (loading),
+B (drawing and panels) and C (file dialog)**. Next: groups D–E below, then tick step 7; after that
+steps 8–11.
 
 Steps 1–6 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
@@ -27,7 +28,9 @@ lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `gr
   (fills, then the selected piece as a 6 px band, then the seam strokes, then labels); refits on
   size changes until the user pans or zooms.
 * `src/dateiwahl.rs` – in-app file dialog (confirm button "Datei öffnen"/"Datei wählen", not
-  "Öffnen", which is the toolbar button).
+  "Öffnen", which is the toolbar button). Nothing touches the disk per frame: drives read once per
+  dialog (Windows: `GetLogicalDrives`, no drive is opened), only visible rows laid out
+  (`show_rows`); on Windows hidden/system entries are left out like dot files.
 * `src/app.rs` – `App` (`eframe::App`): every command is an `Aktion` run at the end of the frame
   (`App::ausfuehren`); shortcuts (Strg+O, Strg+Q, F, L, Tab/Umschalt+Tab, Esc – letters and Tab not
   while a text field has focus or a dialog is open); loading (`App::laden` makes paths absolute; a
@@ -88,13 +91,20 @@ Severity in brackets. Tick when fixed and committed; "won't fix" needs a reason 
 - [x] 15 [low] long status messages cut off: truncated with "…", full text on hover, a click
       reopens the error window
 
-**Group C – file dialog** (`dateiwahl.rs`) – open:
+**Group C – file dialog** (`dateiwahl.rs`) – done:
 
-- [ ] 10, 17 [medium] drive letters probed every frame on Windows: list once per dialog, from
-      `GetLogicalDrives` (no disk access)
-- [ ] 13 [low] long folders laid out completely every frame (`show_rows`); "Filter: aus" with
-      "alle Dateien"
-- [ ] 14 [low] Windows hidden/system entries listed: skip by file attributes
+- [x] 10, 17 [medium] drive letters probed every frame on Windows: read once per dialog
+      (`Dateiwahl::laufwerke`) from `GetLogicalDrives` (raw `extern "system"` like `klon3d-view`,
+      no new dependency); unit test of the bit mask everywhere, of the system drive on Windows
+- [x] 13 [low] long folders laid out completely every frame: `show_rows` (unit test: 3000 files,
+      fewer than 100 rows laid out, counted through AccessKit); "Filter: aus (alle Dateien)" and
+      "keine Einträge" with "alle Dateien"
+- [x] 14 [low] Windows hidden/system entries listed: skipped by file attribute (unit test with
+      `attrib +h`, runs on Windows only)
+
+Windows-only code (`cfg(windows)`) checked with `cargo +1.99 check --locked -p klon3d-app
+--all-targets --target x86_64-pc-windows-msvc` (compiles, no warnings); not run on Windows yet –
+the Windows CI job (finding 16) is the first place that runs it.
 
 **Group D – Windows build, CI, manifest** (`main.rs`, `Cargo.toml` of the crate, `ci.yml`) – open:
 
