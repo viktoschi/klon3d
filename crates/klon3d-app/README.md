@@ -9,6 +9,29 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
+**2026-11-02 – step 7b (window arrangement like CLO) in progress.** Done and committed so far:
+
+* **Part 1 – menus and shortcuts:** nine menus in CLO's order with our own German labels
+  (Datei, Bearbeiten, 3D-Kleidung, 2D-Schnitt, Materialien, Avatar, Anzeige, Einstellungen,
+  Hilfe; the old "Simulation", "Ansicht" and "Prüfen" menus are gone), submenus, checkboxes for
+  toggles, radio buttons for design and language, every later entry disabled with the hover text
+  `SPAETER`. New: Datei › Zuletzt geöffnet (last 10 patterns, stored, missing files disabled,
+  "Liste leeren"), Datei › Informationen… (window `dialoge.rs`), 2D toggles Längen (edge
+  lengths in cm at each edge's middle, `ansicht2d::halbweg`), Teilnamen, Maßstab; shortcuts
+  Umschalt+S (Nähte), Umschalt+Z (Längen), Strg+Tab (3D/2D window). New module `anordnung.rs`:
+  arrangement, 2D toggles and recent files as forgiving `name=wert` texts in eframe's storage
+  (missing keys = defaults); fabrics folder `assets/stoffe` searched upwards from the program
+  and the current folder. The floating windows moved from `app.rs` to `dialoge.rs`. The file
+  toolbar (Neu, Öffnen, Speichern, Rückgängig, Wiederholen, Hell/Dunkel) replaced the old
+  toolbar; the 2D toolbar sits above the 2D view for now.
+* **Next – part 2 (layout):** library panel left (`bibliothek.rs`, shared core with the file
+  dialog), object browser (tabs Teile | Nähte | Stoffe) and properties (piece or seam) right,
+  3D | 2D windows with divider, own toolbars, active-window frame (`fenster.rs`); the Fenster
+  toggles of the Anzeige menu already flip `App::anordnung`, the layout does not honour them yet.
+  **Part 3 (tests)** as listed in task D of the session prompt: Fenster toggles, Strg+Tab,
+  Umschalt+S/Z (not in the search field), recent files, library double clicks, seam properties,
+  old stored state, layout reset.
+
 **2026-11-01:** steps 1–7 done. Step 7 (review of the whole crate) found 25 defects; all are fixed
 in five commits (groups A–E below, each builds and keeps `cargo +1.99 test --locked -p klon3d-app`
 green): 30 unit tests + 18 UI tests, no compiler warnings, Windows cross check
@@ -178,6 +201,8 @@ exist but are disabled.
 | Tests | `egui_kittest` 0.37 (dev-dependency) drives the UI headless by labels; no GPU needed | screenshots only where a GPU adapter exists, otherwise skipped (AGENTS.md: tests without data skip) |
 | Language | UI text German, identifiers German like the rest of the code, **comments English** (AGENTS.md) | |
 | Not touched | `PLAN.md` (held by #33), `klon3d-view` (stays the Win32 diagnostic tool) | |
+| Window arrangement (2026-11-02) | layout, menu order and shortcuts follow CLO's visible arrangement where klon3d has the function (3D left, 2D right, library left, object browser and properties right); labels are our own German words; entries for later functions exist but are disabled | users who know CLO find things where they expect them; nothing of CLO's program goes into the repository (AGENTS.md) |
+| Stored settings | short `name=wert` texts per key in eframe's storage, read forgivingly | an older or damaged state must never stop the start; no serde dependency |
 
 ## Planned layout of the crate
 
@@ -209,6 +234,8 @@ seam deviation, last message.
 - [x] 6. `tests/oberflaeche.rs` (kittest) green; `cargo test --locked -p klon3d-app`
 - [x] 7. Review of the whole crate (correctness, UI against PLAN.md, Windows portability, test honesty), fixes
       (25 findings, list above)
+- [ ] 7b. Window arrangement like CLO: (1) menus and shortcuts – done; (2) layout with library,
+      3D | 2D split, object browser and properties, toolbars, persistence; (3) tests
 - [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`
       – both done during step 7 (build **and** test in the job); open: the job passing on CI

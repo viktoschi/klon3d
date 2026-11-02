@@ -1,8 +1,7 @@
-//! The application window: state, actions, keyboard shortcuts, dialogs and the frame layout.
+//! The application: state, actions, keyboard shortcuts and persistence.
 //!
-//! [`App`] implements [`eframe::App`]. Every frame [`App::ui`] lays out, from the outside in:
-//! menu bar and toolbar ([`crate::menue`]), status bar, the side panels ([`crate::panele`]) and the
-//! 2D view ([`crate::ansicht2d`]) in the middle; dialogs float on top.
+//! [`App`] implements [`eframe::App`]. Every frame [`App::ui`] reads dropped files and keys, lays
+//! out the window and the floating dialogs ([`crate::dialoge`]) and then runs the queued actions.
 //!
 //! Menu entries, toolbar buttons, keys and clicks do not change the state directly: they queue an
 //! [`Aktion`], and [`App::ausfuehren`] runs the queue at the end of the frame. One place therefore
@@ -19,13 +18,21 @@
 //! [`App::wartend`]: "Maßdatei wählen…" (menu, error window, a dropped `.smis`) then applies to that
 //! pattern, not to the one still shown. Files dropped together are one request
 //! ([`App::dateien_ablegen`]): a pattern is opened with the measurement file and seam list dropped
-//! with it.
+//! with it. Every pattern loaded goes to the front of the recently opened ones.
+//!
+//! ## Shortcuts
+//!
+//! Strg+O, Strg+Q and Esc always act. Letters (F, L, Umschalt+S, Umschalt+Z) and Tab
+//! (Tab, Umschalt+Tab, Strg+Tab) only act while no text field has the keyboard and the file dialog
+//! is closed – otherwise they are text or move the focus in the dialog.
 //!
 //! ## Persistence
 //!
-//! The theme (dark by default) and the last folder of the file dialog are stored through
-//! eframe's storage ([`App::save`]) under [`SCHLUESSEL_THEMA`] and [`SCHLUESSEL_ORDNER`] and read
-//! back in [`App::neu`]. The theme is applied every frame, not only at start: whoever builds the
+//! Stored through eframe's storage ([`App::save`]) and read back in [`App::neu`]: the theme (dark
+//! by default, [`SCHLUESSEL_THEMA`]), the last folder of the file dialog ([`SCHLUESSEL_ORDNER`]),
+//! the window arrangement, the 2D display toggles and the recently opened patterns (keys in
+//! [`crate::anordnung`]). A missing key means its default, so the state of an older version
+//! starts as before. The theme is applied every frame, not only at start: whoever builds the
 //! context may set its own theme after the app was created (kittest does).
 
 use std::collections::VecDeque;
@@ -34,9 +41,13 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use egui::{Key, KeyboardShortcut, Modifiers, Theme};
 
-use crate::ansicht2d::{Ansicht2d, Klick};
-use crate::dateiwahl::{passt, Antwort, Dateiwahl, Zweck};
-use crate::muster::{dateiname, delta4, Ladeauftrag, Ladefehler, Muster, Nahtstand};
+use crate::anordnung::{
+    self, Anordnung, Anzeige2d, Bereich, Fenster, SCHLUESSEL_ANORDNUNG, SCHLUESSEL_ANZEIGE2D,
+    SCHLUESSEL_ZULETZT,
+};
+use crate::ansicht2d::Ansicht2d;
+use crate::dateiwahl::{passt, Dateiwahl, Zweck};
+use crate::muster::{delta4, Ladeauftrag, Ladefehler, Muster, Nahtstand};
 
 /// Storage key of the theme (`"dunkel"` or `"hell"`).
 pub const SCHLUESSEL_THEMA: &str = "klon3d.thema";
@@ -61,17 +72,27 @@ const BILDZEITEN: usize = 60;
 pub const SEITE_ANTEIL: (f32, f32) = (0.36, 0.24);
 
 /// A command, from a menu, a button, a key or a click.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Aktion {
     Oeffnen,
+    /// Open this pattern (recently opened).
+    MusterOeffnen(PathBuf),
+    ZuletztLeeren,
     MassdateiWaehlen,
     NahtlisteWaehlen,
+    /// Use a file by its kind: a pattern is opened, a measurement file or seam list applies to
+    /// [`App::ladeziel`] – as if it had been dropped onto the window.
+    DateiVerwenden(PathBuf),
+    InformationenZeigen,
     Beenden,
     Einpassen,
     LageUmschalten,
     /// `true` = laid out, `false` = construction coordinates.
     LageSetzen(bool),
     NaehteUmschalten,
+    LaengenUmschalten,
+    TeilnamenUmschalten,
+    MassstabUmschalten,
     ThemaUmschalten,
     ThemaSetzen(Theme),
     NaechstesTeil,
@@ -80,6 +101,15 @@ pub enum Aktion {
     TeilWaehlen(usize),
     NahtWaehlen(usize),
     NahtlaengenZeigen,
+    /// Show or hide a panel, window or toolbar.
+    BereichUmschalten(Bereich),
+    /// Make the other of the 3D and 2D window the active one (both must be shown).
+    FensterWechseln,
+    FensterAktivieren(Fenster),
+    /// All panels, windows and toolbars shown, default sizes and divider.
+    AnordnungZuruecksetzen,
+    /// Show the library at the fabrics folder.
+    StoffbibliothekZeigen,
     /// Show the last error message in the error window again.
     FehlerZeigen,
     TastenkuerzelZeigen,
@@ -110,8 +140,11 @@ pub struct App {
     pub gewaehlt: Option<usize>,
     /// Seam selected in the seam list (index into the seam report).
     pub naht_gewaehlt: Option<usize>,
+    /// The properties show the selected seam rather than the selected piece: the seam was
+    /// chosen last.
+    pub naht_in_eigenschaften: bool,
     pub ansicht: Ansicht2d,
-    /// Search text of the left panel; filters pieces and seams.
+    /// Search text of the object browser; filters pieces and seams.
     pub suche: String,
     /// The last message for the status bar, and whether it is an error.
     pub meldung: String,
@@ -120,12 +153,24 @@ pub struct App {
     pub fehlerfenster: Option<String>,
     pub dateiwahl: Option<Dateiwahl>,
     pub hilfe: Option<Hilfe>,
+    /// The window "Informationen" about the loaded files is open.
+    pub informationen: bool,
     /// Folder the file dialog starts in.
     pub letzter_ordner: PathBuf,
+    /// Recently opened patterns, newest first, at most [`anordnung::ZULETZT_MAX`].
+    pub zuletzt: Vec<PathBuf>,
+    /// Which panels, windows and toolbars are shown.
+    pub anordnung: Anordnung,
+    /// The 3D or the 2D window.
+    pub aktiv: Fenster,
+    /// The fabrics folder (`assets/stoffe`), if one was found at start.
+    pub stoffordner: Option<PathBuf>,
     /// Set by "Beenden"; the window is asked to close.
     pub beenden_angefordert: bool,
     /// Scroll the seam list into view in the next frame.
     pub(crate) nahtliste_zeigen: bool,
+    /// Drop the panel sizes egui keeps, so that the panels start at their default sizes again.
+    pub(crate) panelgroessen_vergessen: bool,
     aktionen: Vec<Aktion>,
     bildzeiten: VecDeque<f64>,
     letzte_zeit: Option<f64>,
@@ -134,28 +179,28 @@ pub struct App {
 }
 
 impl App {
-    /// Build the app; reads theme and last folder from the storage if there is one.
+    /// Build the app; reads the stored settings if there is a storage.
     pub fn neu(cc: &eframe::CreationContext<'_>) -> App {
         let app = App::mit_speicher(cc.storage);
         cc.egui_ctx.set_theme(app.thema);
         app
     }
 
-    /// Build the app from an optional storage (no egui context needed).
+    /// Build the app from an optional storage (no egui context needed). Keys that are missing –
+    /// a first start, or the state of an older version – mean their defaults.
     pub fn mit_speicher(speicher: Option<&dyn eframe::Storage>) -> App {
-        let thema = match speicher
-            .and_then(|s| s.get_string(SCHLUESSEL_THEMA))
-            .as_deref()
-        {
+        let lies = |schluessel: &str| speicher.and_then(|s| s.get_string(schluessel));
+        let thema = match lies(SCHLUESSEL_THEMA).as_deref() {
             Some("hell") => Theme::Light,
             _ => Theme::Dark,
         };
-        let letzter_ordner = speicher
-            .and_then(|s| s.get_string(SCHLUESSEL_ORDNER))
+        let letzter_ordner = lies(SCHLUESSEL_ORDNER)
             .map(PathBuf::from)
             .filter(|p| p.is_dir())
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
+        let mut ansicht = Ansicht2d::default();
+        ansicht.anzeige = Anzeige2d::aus_text(&lies(SCHLUESSEL_ANZEIGE2D).unwrap_or_default());
         App {
             thema,
             auftrag: None,
@@ -164,16 +209,23 @@ impl App {
             muster: None,
             gewaehlt: None,
             naht_gewaehlt: None,
-            ansicht: Ansicht2d::default(),
+            naht_in_eigenschaften: false,
+            ansicht,
             suche: String::new(),
-            meldung: "Bereit – Datei › Muster öffnen… (Strg+O)".into(),
+            meldung: "Bereit – Datei › Öffnen… (Strg+O)".into(),
             meldung_fehler: false,
             fehlerfenster: None,
             dateiwahl: None,
             hilfe: None,
+            informationen: false,
             letzter_ordner,
+            zuletzt: anordnung::zuletzt_aus_text(&lies(SCHLUESSEL_ZULETZT).unwrap_or_default()),
+            anordnung: Anordnung::aus_text(&lies(SCHLUESSEL_ANORDNUNG).unwrap_or_default()),
+            aktiv: Fenster::Zwei,
+            stoffordner: anordnung::stoffordner(),
             beenden_angefordert: false,
             nahtliste_zeigen: false,
+            panelgroessen_vergessen: false,
             aktionen: Vec::new(),
             bildzeiten: VecDeque::with_capacity(BILDZEITEN),
             letzte_zeit: None,
@@ -214,6 +266,7 @@ impl App {
                 if let Some(o) = auftrag.muster.parent().filter(|o| o.is_dir()) {
                     self.letzter_ordner = o.to_path_buf();
                 }
+                anordnung::zuletzt_vorne(&mut self.zuletzt, &auftrag.muster);
                 self.titel = Some(format!("klon3d – {}", m.dateiname()));
                 self.muster = Some(m);
                 self.auftrag = Some(auftrag);
@@ -222,6 +275,7 @@ impl App {
                 self.massdatei_anbieten = false;
                 self.gewaehlt = None;
                 self.naht_gewaehlt = None;
+                self.naht_in_eigenschaften = false;
                 self.nahtliste_zeigen = false;
                 self.ansicht.einpassen();
                 true
@@ -354,6 +408,25 @@ impl App {
         self.gpu.as_deref().unwrap_or("GPU: –")
     }
 
+    /// Is the window `f` shown?
+    pub fn fenster_sichtbar(&self, f: Fenster) -> bool {
+        match f {
+            Fenster::Drei => self.anordnung.fenster3d,
+            Fenster::Zwei => self.anordnung.fenster2d,
+        }
+    }
+
+    /// Keep the active window a shown one: when it was hidden, the other one takes over.
+    fn aktiv_pruefen(&mut self) {
+        let anderes = match self.aktiv {
+            Fenster::Drei => Fenster::Zwei,
+            Fenster::Zwei => Fenster::Drei,
+        };
+        if !self.fenster_sichtbar(self.aktiv) && self.fenster_sichtbar(anderes) {
+            self.aktiv = anderes;
+        }
+    }
+
     /// Run one command.
     pub fn ausfuehren(&mut self, a: Aktion, ctx: &egui::Context) {
         let teile = self.muster.as_ref().map_or(0, |m| m.teile.len());
@@ -361,6 +434,10 @@ impl App {
             Aktion::Oeffnen => {
                 self.dateiwahl = Some(Dateiwahl::neu(Zweck::Muster, &self.letzter_ordner))
             }
+            Aktion::MusterOeffnen(p) => {
+                self.mit_dateien(Some(p), None, None);
+            }
+            Aktion::ZuletztLeeren => self.zuletzt.clear(),
             Aktion::MassdateiWaehlen | Aktion::NahtlisteWaehlen => {
                 let Some(auftrag) = self.ladeziel() else {
                     self.melden("Erst ein Muster öffnen", true);
@@ -378,6 +455,8 @@ impl App {
                     .unwrap_or_else(|| self.letzter_ordner.clone());
                 self.dateiwahl = Some(Dateiwahl::neu(zweck, &ordner));
             }
+            Aktion::DateiVerwenden(p) => self.dateien_ablegen(vec![p]),
+            Aktion::InformationenZeigen => self.informationen = self.muster.is_some(),
             Aktion::Beenden => {
                 self.beenden_angefordert = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -389,7 +468,18 @@ impl App {
                     self.ansicht.lage_umschalten();
                 }
             }
-            Aktion::NaehteUmschalten => self.ansicht.naehte_zeigen = !self.ansicht.naehte_zeigen,
+            Aktion::NaehteUmschalten => {
+                self.ansicht.anzeige.naehte = !self.ansicht.anzeige.naehte
+            }
+            Aktion::LaengenUmschalten => {
+                self.ansicht.anzeige.laengen = !self.ansicht.anzeige.laengen
+            }
+            Aktion::TeilnamenUmschalten => {
+                self.ansicht.anzeige.teilnamen = !self.ansicht.anzeige.teilnamen
+            }
+            Aktion::MassstabUmschalten => {
+                self.ansicht.anzeige.massstab = !self.ansicht.anzeige.massstab
+            }
             Aktion::ThemaUmschalten => {
                 self.thema = match self.thema {
                     Theme::Dark => Theme::Light,
@@ -399,16 +489,22 @@ impl App {
             Aktion::ThemaSetzen(t) => self.thema = t,
             Aktion::NaechstesTeil if teile > 0 => {
                 self.gewaehlt = Some(self.gewaehlt.map_or(0, |g| (g + 1) % teile));
+                self.naht_in_eigenschaften = false;
             }
             Aktion::VorigesTeil if teile > 0 => {
                 self.gewaehlt = Some(self.gewaehlt.map_or(teile - 1, |g| (g + teile - 1) % teile));
+                self.naht_in_eigenschaften = false;
             }
             Aktion::NaechstesTeil | Aktion::VorigesTeil => {}
             Aktion::AuswahlAufheben => {
                 self.gewaehlt = None;
                 self.naht_gewaehlt = None;
+                self.naht_in_eigenschaften = false;
             }
-            Aktion::TeilWaehlen(i) if i < teile => self.gewaehlt = Some(i),
+            Aktion::TeilWaehlen(i) if i < teile => {
+                self.gewaehlt = Some(i);
+                self.naht_in_eigenschaften = false;
+            }
             Aktion::TeilWaehlen(_) => {}
             Aktion::NahtWaehlen(n) => {
                 self.naht_gewaehlt = if self.naht_gewaehlt == Some(n) {
@@ -416,8 +512,37 @@ impl App {
                 } else {
                     Some(n)
                 };
+                self.naht_in_eigenschaften = self.naht_gewaehlt.is_some();
             }
             Aktion::NahtlaengenZeigen => self.nahtliste_zeigen = true,
+            Aktion::BereichUmschalten(b) => {
+                self.anordnung.umschalten(b);
+                self.aktiv_pruefen();
+            }
+            Aktion::FensterWechseln => {
+                if self.anordnung.fenster3d && self.anordnung.fenster2d {
+                    self.aktiv = match self.aktiv {
+                        Fenster::Drei => Fenster::Zwei,
+                        Fenster::Zwei => Fenster::Drei,
+                    };
+                } else {
+                    self.aktiv_pruefen();
+                }
+            }
+            Aktion::FensterAktivieren(f) => {
+                if self.fenster_sichtbar(f) {
+                    self.aktiv = f;
+                }
+            }
+            Aktion::AnordnungZuruecksetzen => {
+                self.anordnung = Anordnung::default();
+                self.panelgroessen_vergessen = true;
+            }
+            Aktion::StoffbibliothekZeigen => {
+                if self.stoffordner.is_some() {
+                    self.anordnung.bibliothek = true;
+                }
+            }
             Aktion::FehlerZeigen if self.meldung_fehler => {
                 self.fehlerfenster = Some(self.meldung.clone());
             }
@@ -430,7 +555,7 @@ impl App {
 
     /// A file chosen in the dialog. Its purpose comes from the dialog, not from the file name:
     /// with "alle Dateien" any file can be chosen.
-    fn datei_annehmen(&mut self, zweck: Zweck, pfad: PathBuf) {
+    pub(crate) fn datei_annehmen(&mut self, zweck: Zweck, pfad: PathBuf) {
         match zweck {
             Zweck::Muster => self.mit_dateien(Some(pfad), None, None),
             Zweck::Massdatei => self.mit_dateien(None, Some(pfad), None),
@@ -438,8 +563,8 @@ impl App {
         };
     }
 
-    /// Keyboard shortcuts. Letters and Tab only act while no text field has the keyboard and no
-    /// dialog is open.
+    /// Keyboard shortcuts. Letters and Tab only act while no text field has the keyboard and
+    /// the file dialog is closed.
     fn tasten(&mut self, ctx: &egui::Context) {
         if ctx.input_mut(|i| i.consume_shortcut(&KUERZEL_OEFFNEN)) {
             self.aktion(Aktion::Oeffnen);
@@ -455,6 +580,8 @@ impl App {
                 self.fehlerfenster = None;
             } else if self.hilfe.is_some() {
                 self.hilfe = None;
+            } else if self.informationen {
+                self.informationen = false;
             } else {
                 self.aktion(Aktion::AuswahlAufheben);
             }
@@ -462,13 +589,17 @@ impl App {
         if self.dateiwahl.is_some() || ctx.text_edit_focused() {
             return;
         }
-        let (f, l, zurueck, vor) = ctx.input_mut(|i| {
+        let (strg_tab, f, l, zurueck, vor, naehte, laengen) = ctx.input_mut(|i| {
             (
+                // Ctrl must match exactly, so plain Tab below does not see Ctrl+Tab.
+                i.consume_key(Modifiers::COMMAND, Key::Tab),
                 i.consume_key(Modifiers::NONE, Key::F),
                 i.consume_key(Modifiers::NONE, Key::L),
                 // Shift+Tab first: `consume_key` ignores extra Shift.
                 i.consume_key(Modifiers::SHIFT, Key::Tab),
                 i.consume_key(Modifiers::NONE, Key::Tab),
+                i.consume_key(Modifiers::SHIFT, Key::S),
+                i.consume_key(Modifiers::SHIFT, Key::Z),
             )
         });
         if f {
@@ -477,9 +608,20 @@ impl App {
         if l {
             self.aktion(Aktion::LageUmschalten);
         }
-        if zurueck || vor {
-            // Tab selects pieces here; egui must not also move the keyboard focus.
+        if naehte {
+            self.aktion(Aktion::NaehteUmschalten);
+        }
+        if laengen {
+            self.aktion(Aktion::LaengenUmschalten);
+        }
+        if strg_tab || zurueck || vor {
+            // Tab selects pieces and windows here; egui must not also move the keyboard focus.
             ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        }
+        if strg_tab {
+            self.aktion(Aktion::FensterWechseln);
+        }
+        if zurueck || vor {
             self.aktion(if zurueck {
                 Aktion::VorigesTeil
             } else {
@@ -549,112 +691,6 @@ impl App {
             (Nahtstand::Geprueft { .. }, None) => "Nahtliste leer".into(),
         }
     }
-
-    fn fenster(&mut self, ctx: &egui::Context) {
-        if let Some(d) = &mut self.dateiwahl {
-            let zweck = d.zweck;
-            match d.ui(ctx) {
-                Some(Antwort::Gewaehlt(p)) => {
-                    if let Some(o) = p.parent().filter(|o| o.is_dir()) {
-                        self.letzter_ordner = o.to_path_buf();
-                    }
-                    self.dateiwahl = None;
-                    self.datei_annehmen(zweck, p);
-                }
-                Some(Antwort::Abbruch) => self.dateiwahl = None,
-                None => {}
-            }
-        }
-        if let Some(text) = self.fehlerfenster.clone() {
-            let (mut zu, mut waehlen) = (false, false);
-            // The pattern that waits for a measurement file, if the error was about it.
-            let angebot = self
-                .wartend
-                .as_ref()
-                .filter(|_| self.massdatei_anbieten)
-                .map(|a| dateiname(&a.muster));
-            egui::Window::new("Fehler")
-                .id(egui::Id::unique("fehlerfenster"))
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.set_max_width(520.0);
-                    ui.colored_label(ui.visuals().error_fg_color, &text);
-                    if let Some(name) = &angebot {
-                        ui.add_space(4.0);
-                        ui.label(format!(
-                            "{name} lädt, sobald eine passende Maßdatei gewählt ist."
-                        ));
-                    }
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if angebot.is_some() {
-                            waehlen = ui.button("Maßdatei wählen…").clicked();
-                        }
-                        zu = ui.button("Fehler schließen").clicked();
-                    });
-                });
-            if waehlen {
-                self.fehlerfenster = None;
-                self.aktion(Aktion::MassdateiWaehlen);
-            }
-            if zu {
-                self.fehlerfenster = None;
-            }
-        }
-        if let Some(h) = self.hilfe {
-            let mut zu = false;
-            let titel = match h {
-                Hilfe::Tastenkuerzel => "Tastenkürzel",
-                Hilfe::Ueber => "Über klon3d",
-            };
-            egui::Window::new(titel)
-                .id(egui::Id::unique("hilfefenster"))
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    match h {
-                        Hilfe::Tastenkuerzel => tastenkuerzel(ui),
-                        Hilfe::Ueber => ueber(ui),
-                    }
-                    ui.add_space(6.0);
-                    zu = ui.button("Hilfe schließen").clicked();
-                });
-            if zu {
-                self.hilfe = None;
-            }
-        }
-    }
-
-    /// Paint a hint while files are dragged over the window.
-    fn ablage_hinweis(&self, ctx: &egui::Context) {
-        let namen: Vec<String> = ctx.input(|i| {
-            i.raw
-                .hovered_files
-                .iter()
-                .filter_map(|f| f.path.as_ref())
-                .filter_map(|p| p.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
-                .collect()
-        });
-        if ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            return;
-        }
-        let maler = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::unique("ablage"),
-        ));
-        let r = ctx.content_rect();
-        maler.rect_filled(r, 0.0, egui::Color32::from_black_alpha(160));
-        maler.text(
-            r.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("Loslassen zum Öffnen\n{}", namen.join("\n")),
-            egui::FontId::proportional(20.0),
-            egui::Color32::WHITE,
-        );
-    }
 }
 
 impl eframe::App for App {
@@ -668,13 +704,19 @@ impl eframe::App for App {
         if let Some(t) = self.titel.take() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(t));
         }
+        if std::mem::take(&mut self.panelgroessen_vergessen) {
+            ctx.data_mut(|d| d.remove_by_type::<egui::containers::panel::PanelState>());
+        }
         self.abgelegte_dateien(&ctx);
         self.tasten(&ctx);
 
         egui::Panel::top("menueleiste").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| crate::menue::menues(self, ui));
         });
-        egui::Panel::top("werkzeugleiste").show(ui, |ui| crate::menue::werkzeugleiste(self, ui));
+        if self.anordnung.leiste_datei {
+            egui::Panel::top("werkzeugleiste")
+                .show(ui, |ui| crate::menue::werkzeugleiste(self, ui));
+        }
         egui::Panel::bottom("statusleiste").show(ui, |ui| crate::panele::statusleiste(self, ui));
         let breite = ui.available_width();
         let (links_max, rechts_max) = (breite * SEITE_ANTEIL.0, breite * SEITE_ANTEIL.1);
@@ -687,16 +729,19 @@ impl eframe::App for App {
             .size_range(180.0f32.min(rechts_max)..=rechts_max)
             .show(ui, |ui| crate::panele::rechts(self, ui));
         egui::CentralPanel::no_frame().show(ui, |ui| {
+            if self.anordnung.leiste_2d {
+                ui.horizontal(|ui| crate::menue::werkzeugleiste_2d(self, ui));
+            }
             let klick =
                 self.ansicht
                     .ui(ui, self.muster.as_ref(), self.gewaehlt, self.naht_gewaehlt);
             match klick {
-                Some(Klick::Teil(i)) => self.aktion(Aktion::TeilWaehlen(i)),
-                Some(Klick::Leer) => self.aktion(Aktion::AuswahlAufheben),
+                Some(crate::ansicht2d::Klick::Teil(i)) => self.aktion(Aktion::TeilWaehlen(i)),
+                Some(crate::ansicht2d::Klick::Leer) => self.aktion(Aktion::AuswahlAufheben),
                 None => {}
             }
         });
-        self.fenster(&ctx);
+        self.dialoge(&ctx);
         self.ablage_hinweis(&ctx);
 
         for a in std::mem::take(&mut self.aktionen) {
@@ -711,42 +756,8 @@ impl eframe::App for App {
         };
         storage.set_string(SCHLUESSEL_THEMA, thema.into());
         storage.set_string(SCHLUESSEL_ORDNER, self.letzter_ordner.display().to_string());
+        storage.set_string(SCHLUESSEL_ANORDNUNG, self.anordnung.als_text());
+        storage.set_string(SCHLUESSEL_ANZEIGE2D, self.ansicht.anzeige.als_text());
+        storage.set_string(SCHLUESSEL_ZULETZT, anordnung::zuletzt_als_text(&self.zuletzt));
     }
-}
-
-/// The table of the help window "Tastenkürzel".
-fn tastenkuerzel(ui: &mut egui::Ui) {
-    egui::Grid::new("tastenkuerzel")
-        .num_columns(2)
-        .striped(true)
-        .show(ui, |ui| {
-            for (taste, wirkung) in [
-                ("Strg+O", "Muster öffnen"),
-                ("Strg+Q", "Beenden"),
-                ("F", "alles einpassen"),
-                ("L", "Auslage / Konstruktionslage"),
-                ("Tab", "nächstes Teil wählen"),
-                ("Umschalt+Tab", "voriges Teil wählen"),
-                ("Esc", "Auswahl aufheben, Dialog schließen"),
-                ("Mausrad", "Zoom um den Mauszeiger"),
-                ("Ziehen", "Ansicht verschieben"),
-                ("Klick", "Teil wählen"),
-            ] {
-                ui.strong(taste);
-                ui.label(wirkung);
-                ui.end_row();
-            }
-        });
-    ui.weak("Buchstaben und Tab wirken nicht, solange ein Textfeld den Fokus hat.");
-}
-
-/// The text of the help window "Über klon3d".
-fn ueber(ui: &mut egui::Ui) {
-    ui.heading(format!("klon3d {}", env!("CARGO_PKG_VERSION")));
-    ui.label("3D-Simulator für Latex- und Textilkleidung.");
-    ui.label(
-        "Dieses Fenster (Stufe 6) zeigt Seamly2D-Muster und prüft Nahtlängen mit denselben Zahlen \
-         wie „klon3d naehte“. 3D-Ansicht, Simulation, Material und Export folgen.",
-    );
-    ui.label("Lizenz: MIT OR Apache-2.0");
 }

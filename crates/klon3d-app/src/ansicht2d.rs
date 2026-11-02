@@ -20,11 +20,19 @@
 //! the warning colour when the seam is conspicuous (|Δ| > `TOLERANZ_CM` or a side without length),
 //! in the error colour when two seams use the same edge. A seam selected in the seam list is always
 //! highlighted.
+//!
+//! ## Display toggles
+//!
+//! [`Anzeige2d`] switches the seams, the piece names, the scale bar and the edge lengths: with
+//! "Längen" on, every boundary edge of the selected piece – of all pieces when none is selected –
+//! carries its length in cm at its middle ([`halbweg`]), on a backdrop; an edge shorter on screen
+//! than its text gets none, so the labels never pile up.
 
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use klon3d_pattern::geom::Pt;
 
+use crate::anordnung::Anzeige2d;
 use crate::muster::{Huelle, Kantenart, Muster, Teil};
 
 /// Free margin when fitting, in screen points.
@@ -149,6 +157,35 @@ pub fn massstab_cm(px_pro_cm: f64, max_px: f64) -> f64 {
         .unwrap_or(zehner)
 }
 
+/// The point halfway along the polyline `punkte` and the unit direction of the segment it lies
+/// on; `None` without length.
+pub fn halbweg(punkte: &[Pt]) -> Option<(Pt, Pt)> {
+    let gesamt: f64 = punkte.windows(2).map(|s| s[0].dist(s[1])).sum();
+    if !(gesamt > 0.0) {
+        return None;
+    }
+    let mut rest = gesamt / 2.0;
+    for s in punkte.windows(2) {
+        let l = s[0].dist(s[1]);
+        if l > 0.0 && rest <= l {
+            let (dx, dy) = ((s[1].x - s[0].x) / l, (s[1].y - s[0].y) / l);
+            return Some((Pt::new(s[0].x + dx * rest, s[0].y + dy * rest), Pt::new(dx, dy)));
+        }
+        rest -= l;
+    }
+    None
+}
+
+/// Length of the polyline `punkte`.
+pub fn linienlaenge(punkte: &[Pt]) -> f64 {
+    punkte.windows(2).map(|s| s[0].dist(s[1])).sum()
+}
+
+/// An edge length in the view: cm with one decimal and a German decimal comma ("12,3").
+pub fn laenge_text(cm: f64) -> String {
+    format!("{cm:.1}").replace('.', ",")
+}
+
 /// Text for a scale bar length: "10 cm", "0,5 cm", "2 m".
 pub fn massstab_text(cm: f64) -> String {
     if cm >= 100.0 {
@@ -187,8 +224,8 @@ pub struct Ansicht2d {
     pub einpass_zoom: f64,
     /// Pieces laid out side by side (`true`) or in construction coordinates.
     pub ausgelegt: bool,
-    /// Highlight the edges used by the seam list.
-    pub naehte_zeigen: bool,
+    /// Seams, edge lengths, piece names, scale bar.
+    pub anzeige: Anzeige2d,
     einpassen_bitte: bool,
     /// Fit again when the view changes its size – until the user pans or zooms. The first
     /// frames do not have the final size yet (side panels settle), and a window resize should
@@ -204,7 +241,7 @@ impl Default for Ansicht2d {
             sicht: None,
             einpass_zoom: 1.0,
             ausgelegt: true,
-            naehte_zeigen: true,
+            anzeige: Anzeige2d::default(),
             einpassen_bitte: true,
             folgt_groesse: true,
             groesse: Vec2::ZERO,
@@ -292,7 +329,7 @@ impl Ansicht2d {
             painter.text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                "Kein Muster geladen – Datei › Muster öffnen… (Strg+O)\noder eine .sm2d-Datei ins Fenster ziehen",
+                "Kein Muster geladen – Datei › Öffnen… (Strg+O)\noder eine .sm2d-Datei ins Fenster ziehen",
                 FontId::proportional(15.0),
                 ui.visuals().weak_text_color(),
             );
@@ -404,7 +441,7 @@ impl Ansicht2d {
                 let hervor = gewaehlte_naht_kanten.contains(&(i, k));
                 let strich = if hervor {
                     Stroke::new(4.0, farben.naht_gewaehlt)
-                } else if self.naehte_zeigen {
+                } else if self.anzeige.naehte {
                     match muster.kantenart(i, k) {
                         Kantenart::Ohne => continue,
                         Kantenart::Genaeht => Stroke::new(2.5, farben.naht),
@@ -419,11 +456,15 @@ impl Ansicht2d {
             }
         }
 
+        if self.anzeige.laengen {
+            self.laengen(&painter, muster, gewaehlt, &bild, &auf_schirm, sicht, &farben, ui);
+        }
+
         // Labels on top, only where they fit into the piece.
         let schrift = FontId::proportional(13.0);
         for (i, t) in muster.teile.iter().enumerate() {
             let v = t.versatz(self.ausgelegt);
-            if !auf_schirm(t, v) {
+            if !self.anzeige.teilnamen || !auf_schirm(t, v) {
                 continue;
             }
             let farbe = if gewaehlt == Some(i) {
@@ -440,8 +481,60 @@ impl Ansicht2d {
             }
         }
 
-        self.massstab(&painter, rect, muster, sicht, ui.visuals());
+        if self.anzeige.massstab {
+            self.massstab(&painter, rect, muster, sicht, ui.visuals());
+        }
         klick
+    }
+
+    /// The length of every boundary edge of the selected piece (of all pieces without a
+    /// selection) at the edge's middle, on a backdrop; edges shorter on screen than their text
+    /// are left out.
+    #[allow(clippy::too_many_arguments)]
+    fn laengen(
+        &self,
+        painter: &egui::Painter,
+        muster: &Muster,
+        gewaehlt: Option<usize>,
+        bild: &dyn Fn(Pt, Pt) -> Pos2,
+        auf_schirm: &dyn Fn(&Teil, Pt) -> bool,
+        sicht: Sicht,
+        farben: &Farben,
+        ui: &egui::Ui,
+    ) {
+        let schrift = FontId::proportional(11.0);
+        let grund = ui.visuals().extreme_bg_color;
+        let hinterlegt = Color32::from_rgba_unmultiplied(grund.r(), grund.g(), grund.b(), 210);
+        for (i, t) in muster.teile.iter().enumerate() {
+            if gewaehlt.is_some_and(|g| g != i) {
+                continue;
+            }
+            let Ok(rand) = &t.rand else {
+                continue;
+            };
+            let v = t.versatz(self.ausgelegt);
+            if !auf_schirm(t, v) {
+                continue;
+            }
+            for kante in &rand.kanten {
+                let Some((mitte, _)) = halbweg(&kante.punkte) else {
+                    continue;
+                };
+                let galley = painter.layout_no_wrap(
+                    laenge_text(rand.in_cm(kante.laenge)),
+                    schrift.clone(),
+                    farben.text,
+                );
+                let auf_dem_schirm = linienlaenge(&kante.punkte) * sicht.zoom;
+                if auf_dem_schirm < galley.size().x as f64 + 6.0 {
+                    continue;
+                }
+                let feld = Rect::from_center_size(bild(mitte, v), galley.size())
+                    .expand2(Vec2::new(3.0, 1.0));
+                painter.rect_filled(feld, 3.0, hinterlegt);
+                painter.galley(feld.min + Vec2::new(3.0, 1.0), galley, farben.text);
+            }
+        }
     }
 
     /// Scale bar in the bottom-left corner.
@@ -648,6 +741,23 @@ mod tests {
         );
         let kontrast = (s.max(n) + 0.05) / (s.min(n) + 0.05);
         assert!(kontrast >= 1.8, "Kontrast {kontrast:.2}");
+    }
+
+    #[test]
+    fn halbweg_entlang_der_linie() {
+        // An L: 10 along x, then 6 along y; halfway (8) lies on the first leg.
+        let l = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 6.0)];
+        let (p, r) = halbweg(&l).unwrap();
+        assert!(nah(p.x, 8.0) && nah(p.y, 0.0));
+        assert!(nah(r.x, 1.0) && nah(r.y, 0.0));
+        assert!(nah(linienlaenge(&l), 16.0));
+        // Repeated points do not count; on the second leg the direction turns.
+        let l = [pt(0.0, 0.0), pt(0.0, 0.0), pt(2.0, 0.0), pt(2.0, 8.0)];
+        let (p, r) = halbweg(&l).unwrap();
+        assert!(nah(p.x, 2.0) && nah(p.y, 3.0) && nah(r.y, 1.0));
+        assert!(halbweg(&[pt(1.0, 1.0), pt(1.0, 1.0)]).is_none());
+        assert!(halbweg(&[]).is_none());
+        assert_eq!(laenge_text(12.345), "12,3");
     }
 
     #[test]

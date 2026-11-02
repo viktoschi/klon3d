@@ -136,6 +136,74 @@ fn klick_bei(h: &mut Harness<'_, App>, pos: egui::Pos2) {
     h.run();
 }
 
+/// The nine menus of the menu bar, in their order.
+const MENUES: [&str; 9] = [
+    "Datei",
+    "Bearbeiten",
+    "3D-Kleidung",
+    "2D-Schnitt",
+    "Materialien",
+    "Avatar",
+    "Anzeige",
+    "Einstellungen",
+    "Hilfe",
+];
+
+/// Does `n` lie inside a menu (a `Ui` of kind menu among its ancestors)?
+fn in_einem_menue(n: &egui_kittest::Node<'_>) -> bool {
+    let mut a = n.accesskit_node().parent();
+    while let Some(p) = a {
+        if p.role() == Role::Menu {
+            return true;
+        }
+        a = p.parent();
+    }
+    false
+}
+
+/// The entry `name` of an open menu or submenu – not a button of the menu bar (some submenus
+/// carry the name of a menu) and not a toolbar button of the same name. Where a submenu and an
+/// entry in it share the name (Anzeige › Avatar › Avatar), the entry of the innermost menu – the
+/// rightmost column – is meant; two of the same name in one menu are an error.
+fn im_menue<'t>(h: &'t Harness<'_, App>, name: &'t str) -> egui_kittest::Node<'t> {
+    let leiste = h.get_by_role_and_label(Role::Button, "Datei").rect().bottom();
+    let mut treffer: Vec<_> = h
+        .query_all_by_label(name)
+        .filter(|n| in_einem_menue(n) && n.rect().top() >= leiste - 0.5)
+        .collect();
+    assert!(!treffer.is_empty(), "„{name}“ in keinem offenen Menü");
+    treffer.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
+    let k = treffer.pop().unwrap();
+    assert!(
+        treffer.iter().all(|n| n.rect().left() < k.rect().left() - 10.0),
+        "„{name}“ mehrfach in einem offenen Menü"
+    );
+    k
+}
+
+/// Open menu `pfad[0]` of the menu bar and in it the submenus `pfad[1..]`.
+fn menue_oeffnen(h: &mut Harness<'_, App>, pfad: &[&str]) {
+    h.get_by_role_and_label(Role::Button, pfad[0]).click();
+    h.run();
+    for name in &pfad[1..] {
+        im_menue(h, name).click();
+        h.run();
+    }
+}
+
+/// Close the open menu (with its submenus) by clicking its button in the menu bar again.
+fn menue_schliessen(h: &mut Harness<'_, App>, menue: &str) {
+    h.get_by_role_and_label(Role::Button, menue).click();
+    h.run();
+}
+
+/// Open the menu at `pfad` and click its entry `eintrag`.
+fn menue_waehlen(h: &mut Harness<'_, App>, pfad: &[&str], eintrag: &str) {
+    menue_oeffnen(h, pfad);
+    im_menue(h, eintrag).click();
+    h.run();
+}
+
 #[test]
 fn teileliste_zeigt_jedes_teil_mit_umriss() {
     let h = mit_bluse();
@@ -284,11 +352,8 @@ fn design_umschalten_und_behalten() {
     assert_eq!(h2.state().thema, Theme::Light);
     assert!(!h2.ctx.global_style().visuals.dark_mode);
 
-    // Back to dark through the menu Ansicht.
-    h2.get_by_label("Ansicht").click();
-    h2.run();
-    h2.get_by_label("Dunkel").click();
-    h2.run();
+    // Back to dark through Einstellungen › Design.
+    menue_waehlen(&mut h2, &["Einstellungen", "Design"], "Dunkel");
     assert_eq!(h2.state().thema, Theme::Dark);
     assert!(h2.ctx.global_style().visuals.dark_mode);
 }
@@ -299,87 +364,186 @@ fn menues_und_gesperrte_eintraege() {
     // Tooltips at once, so hovering an entry shows its hover text in the next frame.
     h.ctx
         .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
-    let menues: [(&str, &[&str], &[&str]); 5] = [
+
+    // The nine menus, left to right in one row.
+    let knoepfe: Vec<egui::Rect> = MENUES
+        .iter()
+        .map(|m| h.get_by_role_and_label(Role::Button, m).rect())
+        .collect();
+    for (paar, namen) in knoepfe.windows(2).zip(MENUES.windows(2)) {
+        assert!(
+            paar[0].right() <= paar[1].left() && (paar[0].top() - paar[1].top()).abs() < 1.0,
+            "{} vor {}",
+            namen[0],
+            namen[1]
+        );
+    }
+
+    // Every menu and submenu with its enabled and its disabled entries (a pattern is loaded).
+    type Menue<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str]);
+    let menues: [Menue; 22] = [
         (
-            "Datei",
+            &["Datei"],
             &[
-                "Muster öffnen… Strg+O",
-                "Maßdatei wählen…",
-                "Nahtliste wählen…",
+                "Öffnen… Strg+O",
+                "Zuletzt geöffnet",
+                "Hinzufügen",
+                "Import",
+                "Export",
+                "Informationen…",
                 "Beenden Strg+Q",
             ],
-            &["Körper…", "Export OBJ…", "Export DXF…"],
+            &[
+                "Neu Strg+N",
+                "Speichern Strg+S",
+                "Speichern unter… Strg+Umschalt+S",
+            ],
+        ),
+        (&["Datei", "Hinzufügen"], &["Maßdatei…", "Nahtliste…"], &[]),
+        (
+            &["Datei", "Import"],
+            &["Seamly2D-Muster (.sm2d)…"],
+            &["CLO-Projekt (.zprj)…"],
+        ),
+        (&["Datei", "Export"], &[], &["OBJ…", "DXF…"]),
+        (
+            &["Bearbeiten"],
+            &["Auswahl aufheben Esc"],
+            &["Rückgängig Strg+Z", "Wiederholen Strg+Y", "Alles auswählen Strg+A"],
         ),
         (
-            "Simulation",
+            &["3D-Kleidung"],
             &[],
             &[
-                "Start",
-                "Pause",
+                "Simulation starten/anhalten",
                 "Einzelschritt",
                 "Zurücksetzen",
-                "Material…",
+                "Anordnen",
+                "Netzauflösung…",
+                "Netzprüfung",
             ],
         ),
         (
-            "Ansicht",
+            &["2D-Schnitt"],
             &[
-                "2D-Muster",
-                "Nähte",
-                "Auslage L",
-                "Konstruktionslage L",
+                "Auslage / Konstruktionslage L",
                 "Einpassen F",
-                "Dunkel",
-                "Hell",
+                "Nächstes Teil Tab",
+                "Vorheriges Teil Umschalt+Tab",
+                "Nähen",
             ],
-            &["3D", "Netz", "Dehnungskarte", "Abstandskarte"],
+            &[],
         ),
-        ("Prüfen", &["Nahtlängen"], &["Netzprüfung"]),
-        ("Hilfe", &["Tastenkürzel", "Über klon3d"], &[]),
+        (
+            &["2D-Schnitt", "Nähen"],
+            &[
+                "Nahtliste wählen…",
+                "Nahtlängen prüfen",
+                "Nähte anzeigen Umschalt+S",
+            ],
+            &[],
+        ),
+        (&["Materialien"], &["Stoffbibliothek"], &["Stoff zuweisen…"]),
+        (
+            &["Avatar"],
+            &["Maßdatei wählen…"],
+            &[
+                "Körper laden… Strg+Umschalt+A",
+                "Avatar anzeigen Umschalt+A",
+                "Maße am Körper",
+            ],
+        ),
+        (
+            &["Anzeige"],
+            &[
+                "Blickwinkel",
+                "3D-Kleidung",
+                "2D-Schnitt",
+                "Avatar",
+                "Fenster",
+                "Werkzeugleisten",
+                "Anordnung zurücksetzen",
+            ],
+            &[],
+        ),
+        (
+            &["Anzeige", "Blickwinkel"],
+            &[],
+            &["Vorne", "Hinten", "Links", "Rechts", "Oben"],
+        ),
+        (
+            &["Anzeige", "3D-Kleidung"],
+            &[],
+            &[
+                "Netz",
+                "Dehnungskarte Alt+7",
+                "Passformkarte Alt+8",
+                "Abstandskarte",
+            ],
+        ),
+        (
+            &["Anzeige", "2D-Schnitt"],
+            &["Nähte Umschalt+S", "Längen Umschalt+Z", "Teilnamen", "Maßstab"],
+            &[],
+        ),
+        (&["Anzeige", "Avatar"], &[], &["Avatar"]),
+        (
+            &["Anzeige", "Fenster"],
+            &[
+                "Bibliothek",
+                "Objekt-Browser",
+                "Eigenschaften",
+                "3D-Fenster",
+                "2D-Fenster",
+                "Fenster wechseln Strg+Tab",
+            ],
+            &[],
+        ),
+        (
+            &["Anzeige", "Werkzeugleisten"],
+            &[
+                "Datei-Werkzeugleiste",
+                "3D-Werkzeugleiste",
+                "2D-Werkzeugleiste",
+            ],
+            &[],
+        ),
+        (&["Einstellungen"], &["Design", "Sprache"], &[]),
+        (&["Einstellungen", "Design"], &["Dunkel", "Hell"], &[]),
+        (&["Einstellungen", "Sprache"], &["Deutsch"], &["English"]),
+        (&["Hilfe"], &["Tastenkürzel", "Über klon3d"], &[]),
+        (&["Datei", "Zuletzt geöffnet"], &["bluse3_v2.sm2d", "Liste leeren"], &[]),
     ];
-    for (menue, frei, gesperrt) in menues {
-        h.get_by_label(menue).click();
-        h.run();
+    for (pfad, frei, gesperrt) in menues {
+        let wo = pfad.join(" › ");
+        menue_oeffnen(&mut h, pfad);
         for e in frei {
-            let k = h.get_by_role_and_label(Role::Button, e);
-            assert!(!k.accesskit_node().is_disabled(), "{menue} › {e} gesperrt");
+            let k = im_menue(&h, e);
+            assert!(!k.accesskit_node().is_disabled(), "{wo} › {e} gesperrt");
         }
         for e in gesperrt {
-            // In the Ansicht menu "3D" also exists as a toolbar button; both are disabled.
-            for k in h.get_all_by_role_and_label(Role::Button, e) {
-                assert!(
-                    k.accesskit_node().is_disabled(),
-                    "{menue} › {e} nicht gesperrt"
-                );
-            }
+            let k = im_menue(&h, e);
+            assert!(k.accesskit_node().is_disabled(), "{wo} › {e} nicht gesperrt");
             // Hovering a disabled entry says why.
-            h.get_all_by_role_and_label(Role::Button, e)
-                .next()
-                .unwrap()
-                .hover();
+            k.hover();
             h.run();
             let hinweis = h
                 .query_all_by_role(Role::Tooltip)
                 .any(|t| t.query_by_label(SPAETER).is_some());
-            assert!(hinweis, "{menue} › {e}: kein Hinweis „{SPAETER}“");
+            assert!(hinweis, "{wo} › {e}: kein Hinweis „{SPAETER}“");
         }
-        // Close the menu again.
-        h.get_by_label(menue).click();
-        h.run();
+        // Close the menu again: none of its entries is left.
+        menue_schliessen(&mut h, pfad[0]);
         for e in gesperrt.iter().chain(frei.iter()) {
-            // "3D" stays as a toolbar button.
-            if *e != "3D" {
-                let noch_da = h.query_by_role_and_label(Role::Button, e).is_some();
-                assert!(!noch_da, "{menue} › {e} nach dem Schliessen");
-            }
+            let noch_da = h
+                .query_all_by_label(e)
+                .any(|n| in_einem_menue(&n) && n.rect().top() > knoepfe[0].bottom());
+            assert!(!noch_da, "{wo} › {e} nach dem Schliessen");
         }
     }
 
     // An enabled entry acts: Hilfe › Tastenkürzel opens the help window.
-    h.get_by_label("Hilfe").click();
-    h.run();
-    h.get_by_label("Tastenkürzel").click();
-    h.run();
+    menue_waehlen(&mut h, &["Hilfe"], "Tastenkürzel");
     assert!(h.state().hilfe.is_some());
     h.get_by_label("Hilfe schließen").click();
     h.run();
@@ -613,7 +777,7 @@ fn muster_ohne_massdatei_laedt_mit_gewaehlter() {
     let kopie = bluse1_ohne_massdatei(&ordner);
     let mass = muster_ordner().join("measurements.smis");
 
-    // Nothing open: the load fails, and Datei › Maßdatei wählen… applies to the failed pattern.
+    // Nothing open: the load fails, and Avatar › Maßdatei wählen… applies to the failed pattern.
     let mut h = fenster();
     h.run();
     assert!(!h.state_mut().muster_laden(&kopie));
@@ -623,9 +787,8 @@ fn muster_ohne_massdatei_laedt_mit_gewaehlter() {
     assert!(f.contains("bluse1_v25.sm2d"), "{f}");
     h.get_by_label("Fehler schließen").click();
     h.run();
-    h.get_by_label("Datei").click();
-    h.run();
-    let eintrag = h.get_by_role_and_label(Role::Button, "Maßdatei wählen…");
+    menue_oeffnen(&mut h, &["Avatar"]);
+    let eintrag = im_menue(&h, "Maßdatei wählen…");
     assert!(!eintrag.accesskit_node().is_disabled(), "Eintrag gesperrt");
     eintrag.click();
     h.run();
@@ -772,20 +935,30 @@ fn relativer_pfad_wird_absolut_gespeichert() {
 fn ohne_muster_sind_musterbefehle_gesperrt() {
     let mut h = fenster();
     h.run();
-    let menues: [(&str, &[&str]); 3] = [
-        ("Datei", &["Maßdatei wählen…", "Nahtliste wählen…"]),
-        ("Ansicht", &["Einpassen F"]),
-        ("Prüfen", &["Nahtlängen"]),
+    let menues: [(&[&str], &[&str]); 5] = [
+        (&["Datei"], &["Informationen…"]),
+        (&["Datei", "Hinzufügen"], &["Maßdatei…", "Nahtliste…"]),
+        (&["Avatar"], &["Maßdatei wählen…"]),
+        (
+            &["2D-Schnitt"],
+            &["Einpassen F", "Nächstes Teil Tab", "Vorheriges Teil Umschalt+Tab"],
+        ),
+        (
+            &["2D-Schnitt", "Nähen"],
+            &["Nahtliste wählen…", "Nahtlängen prüfen"],
+        ),
     ];
-    for (menue, eintraege) in menues {
-        h.get_by_label(menue).click();
-        h.run();
+    for (pfad, eintraege) in menues {
+        menue_oeffnen(&mut h, pfad);
         for e in eintraege {
-            let k = h.get_by_role_and_label(Role::Button, e);
-            assert!(k.accesskit_node().is_disabled(), "{menue} › {e} frei");
+            let k = im_menue(&h, e);
+            assert!(
+                k.accesskit_node().is_disabled(),
+                "{} › {e} frei",
+                pfad.join(" › ")
+            );
         }
-        h.get_by_label(menue).click();
-        h.run();
+        menue_schliessen(&mut h, pfad[0]);
     }
     assert!(h
         .get_by_role_and_label(Role::Button, "Einpassen")
@@ -859,7 +1032,7 @@ fn kleinstes_fenster_laesst_der_ansicht_platz() {
     let ansicht = h.get_by_label("2D-Ansicht").rect();
     assert!(ansicht.width() >= 300.0, "2D-Ansicht nur {ansicht:?}");
     // The seam list is still there, inside its panel.
-    assert!(h.query_by_label("Nähte").is_some());
+    assert!(h.query_by_role_and_label(Role::Label, "Nähte").is_some());
 }
 
 #[test]

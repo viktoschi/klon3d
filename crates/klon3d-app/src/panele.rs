@@ -115,7 +115,7 @@ fn nahtliste(app: &mut App, m: &Muster, ui: &mut egui::Ui) {
     let bericht = match &m.naehte {
         Nahtstand::Keine { gesucht } => {
             ui.label(format!(
-                "Keine Nahtliste: {} fehlt. Datei › Nahtliste wählen… nimmt eine andere.",
+                "Keine Nahtliste: {} fehlt. 2D-Schnitt › Nähen › Nahtliste wählen… nimmt eine andere.",
                 gesucht.display()
             ));
             return;
