@@ -13,7 +13,7 @@ use eframe::egui;
 use egui::{Key, Modifiers, Role, Theme};
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_kittest::Harness;
-use klon3d_app::app::{App, SCHLUESSEL_THEMA};
+use klon3d_app::app::{App, SCHLUESSEL_ORDNER, SCHLUESSEL_THEMA};
 use klon3d_app::dateiwahl::Zweck;
 use klon3d_pattern::geom::{lies_messungen, Auswertung};
 use klon3d_pattern::kanten::Kurvenquelle;
@@ -499,6 +499,11 @@ fn nicht_vorhandene_datei_gibt_meldung_statt_panik() {
     assert!(f.contains("gibt_es_nicht.sm2d"), "{f}");
     // Status bar and error window both show it.
     assert!(h.query_all_by_label_contains("gibt_es_nicht.sm2d").count() >= 2);
+    // A missing pattern is not cured by a measurement file: nothing is offered.
+    assert!(h.state().wartend.is_none());
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Maßdatei wählen…")
+        .is_none());
     h.get_by_label("Fehler schließen").click();
     h.run();
     assert!(h.state().fehlerfenster.is_none());
@@ -548,6 +553,233 @@ fn muster_ablegen_oeffnet_es() {
     h.run();
     assert!(h.state().fehlerfenster.is_some());
     assert!(h.state().muster.is_some());
+}
+
+/// Drop `dateien` onto the window in one frame, as a file manager does with a selection.
+fn ablegen(h: &mut Harness<'_, App>, dateien: &[PathBuf]) {
+    for d in dateien {
+        h.input_mut()
+            .dropped_files
+            .push(Arc::new(Abgelegt(d.clone())));
+    }
+    h.run();
+}
+
+/// A fresh temporary folder for one test.
+fn frischer_ordner(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("klon3d-app-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// A copy of bluse1_v25.sm2d alone in `ordner`, without the measurement file it names.
+fn bluse1_ohne_massdatei(ordner: &Path) -> PathBuf {
+    let kopie = ordner.join("bluse1_v25.sm2d");
+    std::fs::copy(muster_ordner().join("bluse1_v25.sm2d"), &kopie).unwrap();
+    kopie
+}
+
+/// File name of the pattern shown.
+fn gezeigt(h: &Harness<'_, App>) -> Option<String> {
+    h.state().muster.as_ref().map(|m| m.dateiname())
+}
+
+/// Choose `datei` in the open file dialog through its path field.
+fn im_dialog_waehlen(h: &mut Harness<'_, App>, datei: &Path, knopf: &str) {
+    h.state_mut()
+        .dateiwahl
+        .as_mut()
+        .expect("Dialog offen")
+        .pfad_text = datei.display().to_string();
+    h.get_by_label(knopf).click();
+    h.run();
+}
+
+#[test]
+fn muster_ohne_massdatei_laedt_mit_gewaehlter() {
+    let ordner = frischer_ordner("ohne-mass");
+    let kopie = bluse1_ohne_massdatei(&ordner);
+    let mass = muster_ordner().join("measurements.smis");
+
+    // Nothing open: the load fails, and Datei › Maßdatei wählen… applies to the failed pattern.
+    let mut h = fenster();
+    h.run();
+    assert!(!h.state_mut().muster_laden(&kopie));
+    h.run();
+    let f = h.state().fehlerfenster.clone().expect("Fehlerfenster");
+    assert!(f.starts_with("Maßdatei fehlt"), "{f}");
+    assert!(f.contains("bluse1_v25.sm2d"), "{f}");
+    h.get_by_label("Fehler schließen").click();
+    h.run();
+    h.get_by_label("Datei").click();
+    h.run();
+    let eintrag = h.get_by_role_and_label(Role::Button, "Maßdatei wählen…");
+    assert!(!eintrag.accesskit_node().is_disabled(), "Eintrag gesperrt");
+    eintrag.click();
+    h.run();
+    let w = h.state().dateiwahl.as_ref().expect("Dialog");
+    assert_eq!(w.zweck, Zweck::Massdatei);
+    assert!(
+        w.ordner.ends_with(ordner.file_name().unwrap()),
+        "Dialog im Ordner des Musters: {}",
+        w.ordner.display()
+    );
+    im_dialog_waehlen(&mut h, &mass, "Datei wählen");
+    assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
+    let app = h.state();
+    let m = app.muster.as_ref().unwrap();
+    assert_eq!(m.pfad, std::path::absolute(&kopie).unwrap());
+    assert!(m.massdatei_von_hand);
+    assert_eq!(m.teile.len(), 23);
+    assert!(app.wartend.is_none() && app.fehlerfenster.is_none());
+    assert!(
+        app.meldung
+            .starts_with("bluse1_v25.sm2d geladen mit measurements.smis: 23 Teile"),
+        "{}",
+        app.meldung
+    );
+    assert!(h
+        .query_by_label("Maße: measurements.smis · von Hand gewählt")
+        .is_some());
+
+    // Another pattern open: the error window offers the choice for the failed pattern, and the
+    // pattern shown meanwhile stays.
+    let mut h = mit_bluse();
+    assert!(h
+        .query_by_label("Maße: measurements.smis · vom Muster genannt")
+        .is_some());
+    assert!(!h.state_mut().muster_laden(&kopie));
+    h.run();
+    assert_eq!(gezeigt(&h).as_deref(), Some("bluse3_v2.sm2d"));
+    assert!(h
+        .query_by_label_contains("bluse1_v25.sm2d lädt, sobald")
+        .is_some());
+    h.get_by_role_and_label(Role::Button, "Maßdatei wählen…")
+        .click();
+    h.run();
+    assert!(h.state().fehlerfenster.is_none());
+    let w = h.state().dateiwahl.as_ref().expect("Dialog");
+    assert_eq!(w.zweck, Zweck::Massdatei);
+    assert!(w.ordner.ends_with(ordner.file_name().unwrap()));
+    im_dialog_waehlen(&mut h, &mass, "Datei wählen");
+    assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
+    assert_eq!(h.state().muster.as_ref().unwrap().teile.len(), 23);
+
+    let _ = std::fs::remove_dir_all(&ordner);
+}
+
+#[test]
+fn muster_und_massdatei_zusammen_ablegen() {
+    let ordner = frischer_ordner("ablegen");
+    let kopie = bluse1_ohne_massdatei(&ordner);
+    let andere = ordner.join("andere.smis");
+    std::fs::copy(muster_ordner().join("measurements.smis"), &andere).unwrap();
+
+    // One drop is one request, whatever order the file manager gives – also for a pattern
+    // whose own measurement file is there.
+    for muster in [kopie.clone(), bluse()] {
+        for umgekehrt in [false, true] {
+            let mut h = mit_bluse1_oder_leer(muster == bluse());
+            let mut dateien = vec![muster.clone(), andere.clone()];
+            if umgekehrt {
+                dateien.reverse();
+            }
+            ablegen(&mut h, &dateien);
+            let app = h.state();
+            let m = app.muster.as_ref().expect("geladen");
+            assert_eq!(m.pfad.file_name(), muster.file_name(), "{dateien:?}");
+            assert_eq!(m.massdatei_name(), "andere.smis", "{dateien:?}");
+            assert!(app.fehlerfenster.is_none(), "{:?}", app.fehlerfenster);
+            assert!(
+                app.meldung.contains(" geladen mit andere.smis: "),
+                "{}",
+                app.meldung
+            );
+        }
+    }
+
+    // A measurement file dropped alone goes to the pattern that waits for one …
+    let mut h = mit_bluse();
+    assert!(!h.state_mut().muster_laden(&kopie));
+    h.run();
+    ablegen(&mut h, std::slice::from_ref(&andere));
+    assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
+    assert!(h.state().fehlerfenster.is_none());
+    // … and otherwise to the pattern shown.
+    ablegen(&mut h, &[muster_ordner().join("measurements.smis")]);
+    let m = h.state().muster.as_ref().unwrap();
+    assert_eq!(m.dateiname(), "bluse1_v25.sm2d");
+    assert_eq!(m.massdatei_name(), "measurements.smis");
+    assert!(m.massdatei_von_hand);
+
+    // Two patterns at once are refused; the pattern shown stays.
+    ablegen(&mut h, &[bluse(), kopie.clone()]);
+    let f = h.state().fehlerfenster.clone().unwrap_or_default();
+    assert!(f.starts_with("Mehrere Muster"), "{f}");
+    assert_eq!(gezeigt(&h).as_deref(), Some("bluse1_v25.sm2d"));
+
+    let _ = std::fs::remove_dir_all(&ordner);
+}
+
+/// A window with Bluse1 v25 loaded, or an empty one.
+fn mit_bluse1_oder_leer(bluse1: bool) -> Harness<'static, App> {
+    let mut h = fenster();
+    if bluse1 {
+        assert!(h
+            .state_mut()
+            .muster_laden(muster_ordner().join("bluse1_v25.sm2d")));
+    }
+    h.run();
+    h
+}
+
+#[test]
+fn relativer_pfad_wird_absolut_gespeichert() {
+    // cargo runs the tests in the crate folder; a relative path as from the command line.
+    let relativ = Path::new("../klon3d-pattern/tests/muster/bluse3_v2.sm2d");
+    assert!(relativ.is_file(), "Test läuft nicht im Crate-Ordner");
+    let mut h = fenster();
+    h.run();
+    assert!(h.state_mut().muster_laden(relativ));
+    h.run();
+    assert!(h.state().auftrag.as_ref().unwrap().muster.is_absolute());
+    assert!(h.state().letzter_ordner.is_absolute());
+    let mut speicher = Speicher::default();
+    eframe::App::save(h.state_mut(), &mut speicher);
+    let ordner = PathBuf::from(
+        speicher
+            .0
+            .get(SCHLUESSEL_ORDNER)
+            .expect("Ordner gespeichert"),
+    );
+    assert!(ordner.is_absolute(), "{}", ordner.display());
+    assert!(ordner.join("bluse3_v2.sm2d").is_file());
+}
+
+#[test]
+fn ohne_muster_sind_musterbefehle_gesperrt() {
+    let mut h = fenster();
+    h.run();
+    let menues: [(&str, &[&str]); 3] = [
+        ("Datei", &["Maßdatei wählen…", "Nahtliste wählen…"]),
+        ("Ansicht", &["Einpassen F"]),
+        ("Prüfen", &["Nahtlängen"]),
+    ];
+    for (menue, eintraege) in menues {
+        h.get_by_label(menue).click();
+        h.run();
+        for e in eintraege {
+            let k = h.get_by_role_and_label(Role::Button, e);
+            assert!(k.accesskit_node().is_disabled(), "{menue} › {e} frei");
+        }
+        h.get_by_label(menue).click();
+        h.run();
+    }
+    assert!(h
+        .get_by_role_and_label(Role::Button, "Einpassen")
+        .accesskit_node()
+        .is_disabled());
 }
 
 /// All `.sm2d` below `ordner`.

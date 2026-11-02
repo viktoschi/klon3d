@@ -1,8 +1,9 @@
 //! Side panels and status bar.
 //!
-//! * Left: search field, piece list (short name, circumference, nodes) and seam list (Kennung,
-//!   Bezeichnung, L_A, L_B, Δ in cm with four decimals as `klon3d naehte` prints them), below it
-//!   the doubly used edges and the pieces whose boundary cannot be resolved.
+//! * Left: search field, the measurement file in use, piece list (short name, circumference,
+//!   nodes) and seam list (Kennung, Bezeichnung, L_A, L_B, Δ in cm with four decimals as
+//!   `klon3d naehte` prints them), below it the doubly used edges and the pieces whose boundary
+//!   cannot be resolved.
 //! * Right: properties of the selected piece with its boundary edges.
 //! * Bottom: frame rate, GPU, largest seam deviation, last message.
 //!
@@ -53,6 +54,14 @@ pub fn links(app: &mut App, ui: &mut egui::Ui) {
         ui.weak("Kein Muster geladen.");
         return;
     };
+    // Every length shown depends on the body measurements: name the file they come from.
+    let herkunft = if m.massdatei_von_hand {
+        "von Hand gewählt"
+    } else {
+        "vom Muster genannt"
+    };
+    ui.weak(format!("Maße: {} · {herkunft}", m.massdatei_name()))
+        .on_hover_text(m.massdatei.display().to_string());
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {

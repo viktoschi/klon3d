@@ -12,6 +12,15 @@
 //! [`eframe::CreationContext`] (kittest makes one), and [`App::muster_laden`] loads a pattern
 //! without the file dialog.
 //!
+//! ## Loading
+//!
+//! Every load goes through [`App::laden`], which makes the paths absolute first. When a pattern
+//! fails because of its measurement file (not named, missing, unreadable), the request is kept as
+//! [`App::wartend`]: "Maßdatei wählen…" (menu, error window, a dropped `.smis`) then applies to that
+//! pattern, not to the one still shown. Files dropped together are one request
+//! ([`App::dateien_ablegen`]): a pattern is opened with the measurement file and seam list dropped
+//! with it.
+//!
 //! ## Persistence
 //!
 //! The theme (dark by default) and the last folder of the file dialog are stored through
@@ -27,7 +36,7 @@ use egui::{Key, KeyboardShortcut, Modifiers, Theme};
 
 use crate::ansicht2d::{Ansicht2d, Klick};
 use crate::dateiwahl::{passt, Antwort, Dateiwahl, Zweck};
-use crate::muster::{delta4, Ladeauftrag, Muster, Nahtstand};
+use crate::muster::{dateiname, delta4, Ladeauftrag, Ladefehler, Muster, Nahtstand};
 
 /// Storage key of the theme (`"dunkel"` or `"hell"`).
 pub const SCHLUESSEL_THEMA: &str = "klon3d.thema";
@@ -82,6 +91,12 @@ pub struct App {
     pub thema: Theme,
     /// What was loaded last (successfully).
     pub auftrag: Option<Ladeauftrag>,
+    /// A request that failed because of its measurement file. A measurement file or seam list
+    /// chosen afterwards applies to it ([`App::ladeziel`]) until a load succeeds or fails for
+    /// another reason.
+    pub wartend: Option<Ladeauftrag>,
+    /// The error window offers to choose a measurement file for [`App::wartend`].
+    pub massdatei_anbieten: bool,
     pub muster: Option<Muster>,
     /// Selected piece (index into `muster.teile`).
     pub gewaehlt: Option<usize>,
@@ -136,6 +151,8 @@ impl App {
         App {
             thema,
             auftrag: None,
+            wartend: None,
+            massdatei_anbieten: false,
             muster: None,
             gewaehlt: None,
             naht_gewaehlt: None,
@@ -164,8 +181,10 @@ impl App {
         self.laden(Ladeauftrag::neu(pfad.as_ref()))
     }
 
-    /// Load with explicitly chosen files (see [`Ladeauftrag`]).
+    /// Load with explicitly chosen files (see [`Ladeauftrag`]). The paths are made absolute
+    /// first, so that the folder remembered from them stays valid in another working folder.
     pub fn laden(&mut self, auftrag: Ladeauftrag) -> bool {
+        let auftrag = auftrag.absolut();
         match Muster::laden(&auftrag) {
             Ok(m) => {
                 let naehte = match &m.naehte {
@@ -177,8 +196,9 @@ impl App {
                 };
                 self.melden(
                     format!(
-                        "{} geladen: {} Teile, {naehte}",
+                        "{} geladen mit {}: {} Teile, {naehte}",
                         m.dateiname(),
+                        m.massdatei_name(),
                         m.teile.len()
                     ),
                     false,
@@ -189,14 +209,109 @@ impl App {
                 self.titel = Some(format!("klon3d – {}", m.dateiname()));
                 self.muster = Some(m);
                 self.auftrag = Some(auftrag);
+                self.wartend = None;
+                self.fehlerfenster = None;
+                self.massdatei_anbieten = false;
                 self.gewaehlt = None;
                 self.naht_gewaehlt = None;
+                self.nahtliste_zeigen = false;
                 self.ansicht.einpassen();
                 true
             }
             Err(e) => {
-                self.fehler(e);
+                self.fehler(e.text());
+                if matches!(e, Ladefehler::Massdatei(_)) {
+                    self.wartend = Some(auftrag);
+                    self.massdatei_anbieten = true;
+                } else {
+                    self.wartend = None;
+                }
                 false
+            }
+        }
+    }
+
+    /// The request a chosen measurement file or seam list applies to: the one waiting for a
+    /// measurement file, otherwise the one loaded.
+    pub fn ladeziel(&self) -> Option<&Ladeauftrag> {
+        self.wartend.as_ref().or(self.auftrag.as_ref())
+    }
+
+    /// Load `muster` – without one the pattern of [`App::ladeziel`] again – with the measurement
+    /// file and seam list given; one not given stays as the request has it.
+    fn mit_dateien(
+        &mut self,
+        muster: Option<PathBuf>,
+        massdatei: Option<PathBuf>,
+        nahtliste: Option<PathBuf>,
+    ) -> bool {
+        let mut auftrag = match muster {
+            Some(m) => Ladeauftrag::neu(m),
+            None => match self.ladeziel() {
+                Some(a) => a.clone(),
+                None => {
+                    self.melden("Erst ein Muster öffnen", true);
+                    return false;
+                }
+            },
+        };
+        if massdatei.is_some() {
+            auftrag.massdatei = massdatei;
+        }
+        if nahtliste.is_some() {
+            auftrag.nahtliste = nahtliste;
+        }
+        self.laden(auftrag)
+    }
+
+    /// Files dropped onto the window together, as one request: a pattern is opened with the
+    /// measurement file and seam list dropped with it; without a pattern they apply to
+    /// [`App::ladeziel`]. Other files are refused with a message.
+    pub fn dateien_ablegen(&mut self, pfade: Vec<PathBuf>) {
+        let (mut muster, mut mass, mut naht, mut fremd) = (vec![], vec![], vec![], vec![]);
+        for p in pfade {
+            if passt(&p, Zweck::Muster.endungen()) {
+                muster.push(p);
+            } else if passt(&p, Zweck::Massdatei.endungen()) {
+                mass.push(p);
+            } else if passt(&p, Zweck::Nahtliste.endungen()) {
+                naht.push(p);
+            } else {
+                fremd.push(p);
+            }
+        }
+        let mehrfach: Vec<&str> = [
+            (muster.len(), "Muster"),
+            (mass.len(), "Maßdateien"),
+            (naht.len(), "Nahtlisten"),
+        ]
+        .into_iter()
+        .filter(|(n, _)| *n > 1)
+        .map(|(_, art)| art)
+        .collect();
+        if !mehrfach.is_empty() {
+            self.fehler(format!(
+                "Mehrere {} auf einmal abgelegt – bitte höchstens ein Muster, eine Maßdatei und \
+                 eine Nahtliste",
+                mehrfach.join(" und ")
+            ));
+            return;
+        }
+        let geladen = (!muster.is_empty() || !mass.is_empty() || !naht.is_empty())
+            .then(|| self.mit_dateien(muster.pop(), mass.pop(), naht.pop()));
+        if !fremd.is_empty() {
+            let namen: Vec<String> = fremd.iter().map(|p| p.display().to_string()).collect();
+            let hinweis = format!(
+                "{}: kein Muster (.sm2d), keine Maßdatei (.smis) und keine Nahtliste (.naehte)",
+                namen.join(", ")
+            );
+            // A failed load keeps its own message (and its offer) in front.
+            match (geladen, self.fehlerfenster.as_mut()) {
+                (Some(false), Some(f)) => {
+                    f.push('\n');
+                    f.push_str(&hinweis);
+                }
+                _ => self.fehler(hinweis),
             }
         }
     }
@@ -211,6 +326,7 @@ impl App {
     pub fn fehler(&mut self, text: impl Into<String>) {
         let t = text.into();
         self.fehlerfenster = Some(t.clone());
+        self.massdatei_anbieten = false;
         self.melden(t, true);
     }
 
@@ -238,7 +354,7 @@ impl App {
                 self.dateiwahl = Some(Dateiwahl::neu(Zweck::Muster, &self.letzter_ordner))
             }
             Aktion::MassdateiWaehlen | Aktion::NahtlisteWaehlen => {
-                let Some(auftrag) = &self.auftrag else {
+                let Some(auftrag) = self.ladeziel() else {
                     self.melden("Erst ein Muster öffnen", true);
                     return;
                 };
@@ -300,25 +416,14 @@ impl App {
         ctx.request_repaint();
     }
 
-    /// A file chosen in the dialog or dropped onto the window.
+    /// A file chosen in the dialog. Its purpose comes from the dialog, not from the file name:
+    /// with "alle Dateien" any file can be chosen.
     fn datei_annehmen(&mut self, zweck: Zweck, pfad: PathBuf) {
         match zweck {
-            Zweck::Muster => {
-                self.muster_laden(&pfad);
-            }
-            Zweck::Massdatei | Zweck::Nahtliste => {
-                let Some(mut auftrag) = self.auftrag.clone() else {
-                    self.melden("Erst ein Muster öffnen", true);
-                    return;
-                };
-                if zweck == Zweck::Massdatei {
-                    auftrag.massdatei = Some(pfad);
-                } else {
-                    auftrag.nahtliste = Some(pfad);
-                }
-                self.laden(auftrag);
-            }
-        }
+            Zweck::Muster => self.mit_dateien(Some(pfad), None, None),
+            Zweck::Massdatei => self.mit_dateien(None, Some(pfad), None),
+            Zweck::Nahtliste => self.mit_dateien(None, None, Some(pfad)),
+        };
     }
 
     /// Keyboard shortcuts. Letters and Tab only act while no text field has the keyboard and no
@@ -371,8 +476,8 @@ impl App {
         }
     }
 
-    /// Files dropped onto the window: a pattern is opened, a measurement file or seam list is
-    /// used for the open pattern.
+    /// Files dropped onto the window in this frame; one drop is one request
+    /// ([`App::dateien_ablegen`]).
     fn abgelegte_dateien(&mut self, ctx: &egui::Context) {
         let pfade: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -381,17 +486,8 @@ impl App {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        for p in pfade {
-            let zweck = [Zweck::Muster, Zweck::Massdatei, Zweck::Nahtliste]
-                .into_iter()
-                .find(|z| passt(&p, z.endungen()));
-            match zweck {
-                Some(z) => self.datei_annehmen(z, p),
-                None => self.fehler(format!(
-                    "{}: kein Muster (.sm2d), keine Maßdatei (.smis) und keine Nahtliste (.naehte)",
-                    p.display()
-                )),
-            }
+        if !pfade.is_empty() {
+            self.dateien_ablegen(pfade);
         }
     }
 
@@ -458,7 +554,13 @@ impl App {
             }
         }
         if let Some(text) = self.fehlerfenster.clone() {
-            let mut zu = false;
+            let (mut zu, mut waehlen) = (false, false);
+            // The pattern that waits for a measurement file, if the error was about it.
+            let angebot = self
+                .wartend
+                .as_ref()
+                .filter(|_| self.massdatei_anbieten)
+                .map(|a| dateiname(&a.muster));
             egui::Window::new("Fehler")
                 .id(egui::Id::unique("fehlerfenster"))
                 .collapsible(false)
@@ -467,9 +569,24 @@ impl App {
                 .show(ctx, |ui| {
                     ui.set_max_width(520.0);
                     ui.colored_label(ui.visuals().error_fg_color, &text);
+                    if let Some(name) = &angebot {
+                        ui.add_space(4.0);
+                        ui.label(format!(
+                            "{name} lädt, sobald eine passende Maßdatei gewählt ist."
+                        ));
+                    }
                     ui.add_space(6.0);
-                    zu = ui.button("Fehler schließen").clicked();
+                    ui.horizontal(|ui| {
+                        if angebot.is_some() {
+                            waehlen = ui.button("Maßdatei wählen…").clicked();
+                        }
+                        zu = ui.button("Fehler schließen").clicked();
+                    });
                 });
+            if waehlen {
+                self.fehlerfenster = None;
+                self.aktion(Aktion::MassdateiWaehlen);
+            }
             if zu {
                 self.fehlerfenster = None;
             }

@@ -26,8 +26,9 @@
 //! In construction coordinates neighbouring pieces overlap. [`auslegen`] lays them out in rows
 //! without overlap (copied from `klon3d-view`); the view switches between both.
 //!
-//! Nothing here panics on a broken file: errors come back as `Err(String)` with the file name, and a
-//! panic inside the pattern reader is caught and reported the same way.
+//! Nothing here panics on a broken file: errors come back as [`Ladefehler`] with the file name, and a
+//! panic inside the pattern reader is caught and reported the same way. [`Ladefehler::Massdatei`]
+//! marks the errors that another measurement file can cure, so the window can offer to choose one.
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -194,6 +195,41 @@ impl Ladeauftrag {
             nahtliste: None,
         }
     }
+
+    /// The same request with absolute paths, so that it (and the folder remembered from it) still
+    /// means the same files when the working folder changes.
+    pub fn absolut(self) -> Self {
+        let abs = |p: PathBuf| std::path::absolute(&p).unwrap_or(p);
+        Ladeauftrag {
+            muster: abs(self.muster),
+            massdatei: self.massdatei.map(abs),
+            nahtliste: self.nahtliste.map(abs),
+        }
+    }
+}
+
+/// Why a pattern could not be loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ladefehler {
+    /// The measurement file is not named, missing or unreadable; another one may cure it.
+    Massdatei(String),
+    /// Anything else: pattern missing or broken, no usable piece, a panic of the reader.
+    Sonst(String),
+}
+
+impl Ladefehler {
+    /// The message for the user.
+    pub fn text(&self) -> &str {
+        match self {
+            Ladefehler::Massdatei(t) | Ladefehler::Sonst(t) => t,
+        }
+    }
+}
+
+impl std::fmt::Display for Ladefehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.text())
+    }
 }
 
 /// A pattern with all pieces, ready to draw and to list.
@@ -202,6 +238,8 @@ pub struct Muster {
     pub pfad: PathBuf,
     /// The measurement file actually read.
     pub massdatei: PathBuf,
+    /// Whether `massdatei` was chosen by hand (otherwise the pattern names it).
+    pub massdatei_von_hand: bool,
     /// The pattern's unit (`mm`, `cm`, `inch`).
     pub einheit: String,
     pub mm_pro_einheit: f64,
@@ -219,7 +257,7 @@ pub fn naht_auffaellig(n: &Nahtergebnis) -> bool {
 
 impl Muster {
     /// Load a pattern. Errors name the file; a panic of the reader is caught and reported.
-    pub fn laden(auftrag: &Ladeauftrag) -> Result<Muster, String> {
+    pub fn laden(auftrag: &Ladeauftrag) -> Result<Muster, Ladefehler> {
         match catch_unwind(AssertUnwindSafe(|| laden_ungeschuetzt(auftrag))) {
             Ok(ergebnis) => ergebnis,
             Err(nutzlast) => {
@@ -228,12 +266,17 @@ impl Muster {
                     .map(|s| s.to_string())
                     .or_else(|| nutzlast.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unbekannter Fehler".into());
-                Err(format!(
+                Err(Ladefehler::Sonst(format!(
                     "{}: interner Fehler beim Lesen: {grund}",
                     auftrag.muster.display()
-                ))
+                )))
             }
         }
+    }
+
+    /// File name of the measurement file.
+    pub fn massdatei_name(&self) -> String {
+        dateiname(&self.massdatei)
     }
 
     /// Pattern units → cm.
@@ -243,10 +286,7 @@ impl Muster {
 
     /// File name for titles and the status bar.
     pub fn dateiname(&self) -> String {
-        self.pfad
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.pfad.display().to_string())
+        dateiname(&self.pfad)
     }
 
     /// Bounding box over all pieces as drawn; `None` without pieces.
@@ -319,26 +359,49 @@ pub fn massdatei_des_musters(muster_pfad: &Path, muster: &Pattern) -> Result<Pat
     })
 }
 
+/// The file name of `pfad`, or the whole path if it has none.
+pub fn dateiname(pfad: &Path) -> String {
+    pfad.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| pfad.display().to_string())
+}
+
 /// Default place of the seam list: `<stem>.naehte` next to the pattern.
 pub fn nahtliste_neben(muster_pfad: &Path) -> PathBuf {
     muster_pfad.with_extension("naehte")
 }
 
-fn laden_ungeschuetzt(auftrag: &Ladeauftrag) -> Result<Muster, String> {
+fn laden_ungeschuetzt(auftrag: &Ladeauftrag) -> Result<Muster, Ladefehler> {
     let pfad = &auftrag.muster;
     if !pfad.is_file() {
-        return Err(format!("Muster nicht gefunden: {}", pfad.display()));
+        return Err(Ladefehler::Sonst(format!(
+            "Muster nicht gefunden: {}",
+            pfad.display()
+        )));
     }
-    let muster = read_path(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    let muster =
+        read_path(pfad).map_err(|e| Ladefehler::Sonst(format!("{}: {e}", pfad.display())))?;
+    // Before the measurement file: a file without pieces is no pattern, and asking for a
+    // measurement file would send the user the wrong way.
+    if muster.pieces().is_empty() {
+        return Err(Ladefehler::Sonst(format!(
+            "{}: kein Seamly2D-Muster mit Teilen",
+            pfad.display()
+        )));
+    }
     let massdatei = match &auftrag.massdatei {
         Some(m) => m.clone(),
-        None => massdatei_des_musters(pfad, &muster)?,
+        None => massdatei_des_musters(pfad, &muster).map_err(Ladefehler::Massdatei)?,
     };
     if !massdatei.is_file() {
-        return Err(format!("Maßdatei fehlt: {}", massdatei.display()));
+        return Err(Ladefehler::Massdatei(format!(
+            "Maßdatei fehlt: {} (für {})",
+            massdatei.display(),
+            dateiname(pfad)
+        )));
     }
     let mess = lies_messungen(&massdatei, &muster.unit)
-        .map_err(|e| format!("{}: {e}", massdatei.display()))?;
+        .map_err(|e| Ladefehler::Massdatei(format!("{}: {e}", massdatei.display())))?;
     let ev = Auswertung::new(&muster, mess);
 
     let mut teile = Vec::new();
@@ -378,10 +441,10 @@ fn laden_ungeschuetzt(auftrag: &Ladeauftrag) -> Result<Muster, String> {
         });
     }
     if teile.is_empty() {
-        return Err(format!(
+        return Err(Ladefehler::Sonst(format!(
             "{}: kein Teil mit brauchbarer Nahtlinie",
             pfad.display()
-        ));
+        )));
     }
     let namen: Vec<String> = teile.iter().map(|t| t.name.clone()).collect();
     let vorsatz = vorsatz_laenge(&namen);
@@ -406,6 +469,7 @@ fn laden_ungeschuetzt(auftrag: &Ladeauftrag) -> Result<Muster, String> {
     Ok(Muster {
         pfad: pfad.clone(),
         massdatei,
+        massdatei_von_hand: auftrag.massdatei.is_some(),
         einheit: muster.unit.clone(),
         mm_pro_einheit: ev.mm_pro_einheit(),
         teile,
@@ -794,12 +858,15 @@ mod tests {
     fn fehlende_dateien_geben_meldungen() {
         let weg = muster_ordner().join("gibt_es_nicht.sm2d");
         let e = Muster::laden(&Ladeauftrag::neu(&weg)).unwrap_err();
-        assert!(e.contains("gibt_es_nicht.sm2d"), "{e}");
+        assert!(matches!(e, Ladefehler::Sonst(_)), "{e:?}");
+        assert!(e.text().contains("gibt_es_nicht.sm2d"), "{e}");
 
         let mut a = Ladeauftrag::neu(bluse());
         a.massdatei = Some(muster_ordner().join("fehlt.smis"));
         let e = Muster::laden(&a).unwrap_err();
-        assert!(e.starts_with("Maßdatei fehlt"), "{e}");
+        assert!(matches!(e, Ladefehler::Massdatei(_)), "{e:?}");
+        assert!(e.text().starts_with("Maßdatei fehlt"), "{e}");
+        assert!(e.text().contains("bluse3_v2.sm2d"), "{e}");
 
         let mut a = Ladeauftrag::neu(bluse());
         a.nahtliste = Some(muster_ordner().join("fehlt.naehte"));
@@ -819,7 +886,39 @@ mod tests {
         let p = dir.join("kaputt.sm2d");
         std::fs::write(&p, "das ist kein XML <<<").unwrap();
         let e = Muster::laden(&Ladeauftrag::neu(&p)).unwrap_err();
-        assert!(e.contains("kaputt.sm2d"), "{e}");
+        assert!(e.text().contains("kaputt.sm2d"), "{e}");
+        // Plain text is no pattern; the error must not ask for a measurement file.
+        let p = dir.join("text.sm2d");
+        std::fs::write(&p, "Hallo Welt\nnur Text\n").unwrap();
+        let e = Muster::laden(&Ladeauftrag::neu(&p)).unwrap_err();
+        assert!(matches!(e, Ladefehler::Sonst(_)), "{e:?}");
+        assert!(!e.text().contains("Maßdatei"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn muster_ohne_massdatei_ist_ein_massdateifehler() {
+        // bluse3_v2 without its <measurements> element: the pattern names no measurement file.
+        let dir = std::env::temp_dir().join(format!("klon3d-app-ohne-mass-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = std::fs::read_to_string(bluse()).unwrap();
+        let ohne: String = text
+            .lines()
+            .filter(|z| !z.contains("<measurements"))
+            .map(|z| format!("{z}\n"))
+            .collect();
+        assert_ne!(ohne.len(), text.len(), "bluse3_v2 nennt eine Maßdatei");
+        let p = dir.join("ohne.sm2d");
+        std::fs::write(&p, ohne).unwrap();
+        let e = Muster::laden(&Ladeauftrag::neu(&p)).unwrap_err();
+        assert!(matches!(e, Ladefehler::Massdatei(_)), "{e:?}");
+        // With a measurement file chosen by hand it loads.
+        let mut a = Ladeauftrag::neu(&p);
+        a.massdatei = Some(muster_ordner().join("measurements.smis"));
+        let m = Muster::laden(&a).unwrap();
+        assert_eq!(m.teile.len(), 28);
+        assert!(m.massdatei_von_hand);
+        assert_eq!(m.massdatei_name(), "measurements.smis");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

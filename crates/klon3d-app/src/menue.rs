@@ -8,6 +8,10 @@ use eframe::egui;
 use egui::{Button, Theme};
 
 use crate::app::{Aktion, App, SPAETER};
+use crate::muster::dateiname;
+
+/// Hover text of an entry that needs a pattern.
+const ERST_MUSTER: &str = "erst ein Muster öffnen";
 
 /// A menu entry that queues `aktion` when clicked; `kuerzel` is shown on the right.
 fn eintrag(ui: &mut egui::Ui, app: &mut App, text: &str, kuerzel: &str, aktion: Aktion) {
@@ -21,13 +25,33 @@ fn eintrag(ui: &mut egui::Ui, app: &mut App, text: &str, kuerzel: &str, aktion: 
 }
 
 /// A menu entry that is enabled only with a loaded pattern.
-fn eintrag_mit_muster(ui: &mut egui::Ui, app: &mut App, text: &str, aktion: Aktion) {
+fn eintrag_mit_muster(ui: &mut egui::Ui, app: &mut App, text: &str, kuerzel: &str, aktion: Aktion) {
     let da = app.muster.is_some();
+    let mut knopf = Button::new(text);
+    if !kuerzel.is_empty() {
+        knopf = knopf.shortcut_text(kuerzel);
+    }
     if ui
-        .add_enabled(da, Button::new(text))
-        .on_disabled_hover_text("erst ein Muster öffnen")
+        .add_enabled(da, knopf)
+        .on_disabled_hover_text(ERST_MUSTER)
         .clicked()
     {
+        app.aktion(aktion);
+    }
+}
+
+/// A menu entry that chooses a file for [`App::ladeziel`] – the pattern shown, or one that failed
+/// for want of a measurement file; the hover text names it.
+fn eintrag_fuer_ziel(ui: &mut egui::Ui, app: &mut App, text: &str, aktion: Aktion) {
+    let ziel = app.ladeziel().map(|a| dateiname(&a.muster));
+    let r = ui
+        .add_enabled(ziel.is_some(), Button::new(text))
+        .on_disabled_hover_text(ERST_MUSTER);
+    let r = match &ziel {
+        Some(z) => r.on_hover_text(format!("für {z}")),
+        None => r,
+    };
+    if r.clicked() {
         app.aktion(aktion);
     }
 }
@@ -53,8 +77,8 @@ fn schalter(ui: &mut egui::Ui, app: &mut App, text: &str, kuerzel: &str, an: boo
 pub fn menues(app: &mut App, ui: &mut egui::Ui) {
     ui.menu_button("Datei", |ui| {
         eintrag(ui, app, "Muster öffnen…", "Strg+O", Aktion::Oeffnen);
-        eintrag_mit_muster(ui, app, "Maßdatei wählen…", Aktion::MassdateiWaehlen);
-        eintrag_mit_muster(ui, app, "Nahtliste wählen…", Aktion::NahtlisteWaehlen);
+        eintrag_fuer_ziel(ui, app, "Maßdatei wählen…", Aktion::MassdateiWaehlen);
+        eintrag_fuer_ziel(ui, app, "Nahtliste wählen…", Aktion::NahtlisteWaehlen);
         ui.separator();
         spaeter(ui, "Körper…");
         spaeter(ui, "Export OBJ…");
@@ -94,7 +118,7 @@ pub fn menues(app: &mut App, ui: &mut egui::Ui) {
             !aus,
             Aktion::LageSetzen(false),
         );
-        eintrag(ui, app, "Einpassen", "F", Aktion::Einpassen);
+        eintrag_mit_muster(ui, app, "Einpassen", "F", Aktion::Einpassen);
         ui.separator();
         let dunkel = app.thema == Theme::Dark;
         schalter(
@@ -115,7 +139,7 @@ pub fn menues(app: &mut App, ui: &mut egui::Ui) {
         );
     });
     ui.menu_button("Prüfen", |ui| {
-        eintrag(ui, app, "Nahtlängen", "", Aktion::NahtlaengenZeigen);
+        eintrag_mit_muster(ui, app, "Nahtlängen", "", Aktion::NahtlaengenZeigen);
         spaeter(ui, "Netzprüfung");
     });
     ui.menu_button("Hilfe", |ui| {
@@ -138,7 +162,7 @@ pub fn werkzeugleiste(app: &mut App, ui: &mut egui::Ui) {
         if ui
             .add_enabled(app.muster.is_some(), Button::new("Einpassen"))
             .on_hover_text("alles einpassen (F)")
-            .on_disabled_hover_text("alles einpassen (F) – erst ein Muster öffnen")
+            .on_disabled_hover_text(format!("alles einpassen (F) – {ERST_MUSTER}"))
             .clicked()
         {
             app.aktion(Aktion::Einpassen);

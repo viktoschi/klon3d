@@ -9,38 +9,99 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
-**2026-11-01:** steps 1–6 done. The window runs: `cargo +1.99 run --locked -p klon3d-app --
+**2026-11-01:** step 7 (review) in progress. A review of the whole crate found 25 defects (numbered
+below as in the review); they are fixed in this order, one commit per group, each commit builds and
+`cargo +1.99 test --locked -p klon3d-app` is green after it. Done so far: **group A (loading)**.
+Next: groups B–E below, then tick step 7; after that steps 8–11.
+
+Steps 1–6 (2026-11-01): the window runs: `cargo +1.99 run --locked -p klon3d-app --
 crates/klon3d-pattern/tests/muster/bluse3_v2.sm2d` opens it with the blouse (checked under Xvfb with
 lavapipe: 28 pieces, 24 seams, status bar `GPU: llvmpipe (…) (Vulkan)` and `größte Abweichung N07L
-Δ -0.0737 cm` as `klon3d naehte` prints). `cargo +1.99 test --locked -p klon3d-app`: 25 unit tests +
-11 UI tests (`tests/oberflaeche.rs`, egui_kittest, no GPU) green, no compiler warnings. Files:
+Δ -0.0737 cm` as `klon3d naehte` prints). Files:
 
-* `src/muster.rs` – pattern as plain data (outlines, ear-clipping triangulation, layout, boundary
-  edges, seam report, errors as `Err(String)`, reader panics caught).
+* `src/muster.rs` – pattern as plain data (outlines, fill triangulation, layout, boundary
+  edges, seam report, errors as `Ladefehler` – `Massdatei` for errors another measurement file can
+  cure, `Sonst` otherwise –, reader panics caught).
 * `src/ansicht2d.rs` – view math as plain functions (`Sicht`, `treffer`, scale bar) and the painting;
   refits on size changes until the user pans or zooms.
 * `src/dateiwahl.rs` – in-app file dialog (confirm button "Datei öffnen"/"Datei wählen", not
   "Öffnen", which is the toolbar button).
 * `src/app.rs` – `App` (`eframe::App`): every command is an `Aktion` run at the end of the frame
   (`App::ausfuehren`); shortcuts (Strg+O, Strg+Q, F, L, Tab/Umschalt+Tab, Esc – letters and Tab not
-  while a text field has focus or a dialog is open); drag and drop (.sm2d/.smis/.naehte); error and
-  help windows; theme and last folder saved under `klon3d.thema` / `klon3d.ordner`.
+  while a text field has focus or a dialog is open); loading (`App::laden` makes paths absolute; a
+  pattern that fails for its measurement file waits in `App::wartend`, and "Maßdatei wählen…" – menu,
+  error-window button or a dropped `.smis` – applies to it); drag and drop (one drop = one request,
+  `App::dateien_ablegen`); error and help windows; theme and last folder saved under
+  `klon3d.thema` / `klon3d.ordner`.
 * `src/menue.rs` – menu bar and toolbar; later entries disabled with hover "folgt in einer späteren
-  Aufgabe".
-* `src/panele.rs` – search field, piece list, seam list, properties panel, status bar.
+  Aufgabe"; entries that need a pattern disabled without one.
+* `src/panele.rs` – search field, measurement file in use ("Maße: …"), piece list, seam list,
+  properties panel, status bar.
 * `src/main.rs` – `klon3d-app [muster.sm2d]`, wgpu renderer, title "klon3d", min size 800×500.
 * `tests/oberflaeche.rs` – pieces and seams against an independent `klon3d-pattern` evaluation
   (Δ formatted like the CLI), list click and view click select a piece and fill the properties,
   theme toggle + save/restore through an in-memory `eframe::Storage`, all five menus with their
   disabled entries, shortcuts incl. "no letters while the search field has focus", file dialog,
-  drag and drop, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster`
-  load (largest deviations equal `klon3d naehte` for bolero_v37, bustier_v1, bluse2_v26 – checked
-  by hand).
+  drag and drop (also pattern + measurement file in one drop, both orders), a pattern without its
+  measurement file loads after choosing one (menu and error window), relative paths stored
+  absolute, missing files give messages, all 10 `.sm2d` below `klon3d-pattern/tests/muster` are
+  loaded (see finding 20 for what that test asserts).
 
 `Cargo.lock` change for the kittest `eframe` feature: one dependency edge (`egui_kittest` → `eframe`).
 
-Next: step 7 (review), then 8 (Windows cross check + CI job), 9 (screenshots), 10 (workspace
-check), 11 (PR).
+### Review findings (step 7)
+
+Severity in brackets. Tick when fixed and committed; "won't fix" needs a reason here.
+
+**Group A – loading** (`app.rs`, `muster.rs`, `menue.rs`, `panele.rs`, `tests/oberflaeche.rs`) – done:
+
+- [x] 1, 6 [medium/high] a pattern whose measurement file is missing or not named could not get one:
+      the failed request is kept (`App::wartend`), menu entry enabled for it (hover "für <name>"),
+      error window offers "Maßdatei wählen…", typed error `Ladefehler`; a plain text file is
+      reported as "kein Seamly2D-Muster mit Teilen", not as a missing measurement file
+- [x] 2, 7 [low/medium] dropped files handled one by one: one drop is one request
+- [x] 5, 25 [low] measurement file in use never shown: status "… geladen mit <smis>: …", left panel
+      "Maße: <smis> · vom Muster genannt / von Hand gewählt" (hover: full path)
+- [x] 11 [low] last folder stored relative: `Ladeauftrag::absolut` in `App::laden`
+- [x] 12 [low] Prüfen › Nahtlängen and Ansicht › Einpassen enabled without a pattern; the seam-list
+      scroll flag is also cleared on load
+
+**Group B – drawing and panels** (`muster.rs`, `ansicht2d.rs`, `panele.rs`, `app.rs`) – open:
+
+- [ ] 3 [low] fill triangulation overlaps for self-overlapping outlines (bolero sleeves): build the
+      fill by the even-odd rule in horizontal bands (breaks at vertex heights and edge crossings);
+      test over every piece of every test pattern on a raster against `ansicht2d::innen`
+- [ ] 4 [low] circumference of a piece whose boundary cannot be resolved shown unmarked:
+      `umfang_cm: Option<f64>`, "–" with the reason on hover
+- [ ] 8 [medium] at 800×500 the 2D view shrinks to ~20 px: cap both panels, seam grid scrolls
+      horizontally
+- [ ] 9 [medium] dark mode: selection outline hidden under seam strokes: halo after the fills,
+      lighter selected fill
+- [ ] 15 [low] long status messages cut off: truncate with "…", full text on hover, click reopens
+      the error window
+
+**Group C – file dialog** (`dateiwahl.rs`) – open:
+
+- [ ] 10, 17 [medium] drive letters probed every frame on Windows: list once per dialog, from
+      `GetLogicalDrives` (no disk access)
+- [ ] 13 [low] long folders laid out completely every frame (`show_rows`); "Filter: aus" with
+      "alle Dateien"
+- [ ] 14 [low] Windows hidden/system entries listed: skip by file attributes
+
+**Group D – Windows build, CI, manifest** (`main.rs`, `Cargo.toml` of the crate, `ci.yml`) – open:
+
+- [ ] 16 [medium] Windows CI job does not build or test klon3d-app
+- [ ] 18 [low] release build on Windows opens a console window
+- [ ] 19 [low] `rust-version = "1.95"` lower than what builds the crate (1.99)
+
+**Group E – test honesty** (`tests/oberflaeche.rs`, `muster.rs` tests) – open:
+
+- [ ] 20 [medium] `jedes_pruefmuster_laedt_oder_meldet` accepts any outcome: assert every pattern
+      loads and its largest deviation equals an independent `pruefe_naehte`
+- [ ] 21 [low] precondition "Randkanten (22)" can never fail
+- [ ] 22 [low] "clicking disabled Start changes nothing" can never fail: check the hover text instead
+- [ ] 23 [low] drop test does not check why a file is refused
+- [ ] 24 [low] `etikett_liegt_im_bogen` asserts only "not in the gap", not "inside the piece"
 
 Notes: egui's default fonts have no arrows (→ ← ↑ ↓), check marks or emoji; use `›`, `–`, `Δ`, `≤`,
 `·`, `×`, `…` only (kittest panics on a missing glyph). `egui::Id::new` is deprecated in 0.37
