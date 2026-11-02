@@ -14,7 +14,13 @@ of them the same: the Δ column); all are fixed in one commit, each observable o
 fails on the code before (checked by running the new tests against the old files):
 **41 unit tests + 35 UI tests** (18 in `tests/oberflaeche.rs`, 17 in `tests/fensteranordnung.rs`),
 no compiler warnings, Windows cross check clean, the crate's files rustfmt-clean. List under
-"Review findings (step 7b)" below.
+"Review findings (step 7b)" below. Fresh screenshots of the real window (Xvfb 1600×1000, default
+window 1400×900, checked by eye, not in the repository; `/tmp/claude-0/shots2/final_*.png` in the
+cloud container, gone with it): dark with the hover name of the piece under the pointer; light
+with the Nähte tab – the whole seam grid, Δ second, inside the object browser; Längen on with
+"Rueckenteil Mitte Links" selected – its name above the piece, lengths around it; Längen of all
+pieces with the 3D window hidden – no length over a name; Hilfe › Tastenkürzel centred, menu bar
+and file toolbar free. Step 7b stays ticked; **what remains are steps 8–11** (below).
 
 **2026-11-02 – step 7b done:** the window is arranged the way CLO users know it, in three commits
 (each builds, keeps `cargo +1.99 test --locked -p klon3d-app` green and passes the Windows cross
