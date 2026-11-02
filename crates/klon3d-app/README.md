@@ -9,6 +9,21 @@ done and committed; update "Status" at the top when you stop.
 
 ## Status
 
+**2026-11-02 – steps 8–10 done, pull request open (step 11):** `origin/main` (with #35 from task #33)
+is merged into the branch – a merge, not a rebase, so the branch never needs a force push; the PR is
+squash-merged anyway. On the merged state: `cargo +1.99 build --locked --workspace --exclude
+klon3d-view --all-targets` passes (one warning, in `klon3d-sim/tests/gpu.rs` from #33, not in this
+crate); `cargo +1.99 test --locked --workspace --exclude klon3d-view --no-fail-fast`: 54 test
+targets, 379 passed, 0 failed, 37 ignored. Screenshots of the real window are in `bilder/` (see
+below). Open: the CI run of the PR (Linux and the Windows job that now builds and tests this
+crate) and a first start on the main machine.
+
+![klon3d-app, dark: Bluse3 v2, piece selected, edge lengths on](bilder/fenster_dunkel.png)
+
+![klon3d-app, light: Nähte tab of the object browser](bilder/fenster_hell.png)
+
+Both taken under Xvfb with software Vulkan (lavapipe), window 1400×900.
+
 **2026-11-02 – review of step 7b done:** reviewers found 11 defects in the new arrangement (two
 of them the same: the Δ column); all are fixed in one commit, each observable one with a test that
 fails on the code before (checked by running the new tests against the old files):
@@ -356,13 +371,13 @@ message.
 - [x] 7b. Window arrangement like CLO: (1) menus and shortcuts; (2) layout with library,
       3D | 2D split, object browser and properties, toolbars, persistence; (3) tests
       (`tests/fensteranordnung.rs`) and screenshots checked by eye (2026-11-02)
-- [ ] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
+- [x] 8. Windows: `cargo check --locked -p klon3d-app --target x86_64-pc-windows-msvc` (cross check, no linker
       needed); add `cargo build --locked -p klon3d-app` to the Windows job in `.github/workflows/ci.yml`
       – both done during step 7 (build **and** test in the job); open: the job passing on CI
-- [ ] 9. Screenshots dark/light with the blouse loaded (environment below), attach to the PR
-- [ ] 10. Full workspace check: `cargo build --locked --workspace --exclude klon3d-view --all-targets` and
-      `cargo test --locked --workspace --exclude klon3d-view`
-- [ ] 11. `git fetch origin && git rebase origin/main`, push, pull request with the template
+- [x] 9. Screenshots dark/light with the blouse loaded (environment below): `bilder/`, shown under "Status"
+- [x] 10. Full workspace check: `cargo build --locked --workspace --exclude klon3d-view --all-targets` and
+      `cargo test --locked --workspace --exclude klon3d-view` (2026-11-02, on the state merged with `main`)
+- [ ] 11. `git fetch origin && git merge origin/main` (a rebase would need a force push), push, pull request with the template
       (`.github/pull_request_template.md`: Change / Evidence / Not checked / Limits and provenance),
       `Closes #34`; then on #34: label `review` instead of `in-progress` and a done comment
       (`tools/task.sh done 34 <session> <pr>` does both where `gh` is available)
